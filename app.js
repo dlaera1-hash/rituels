@@ -144,20 +144,84 @@ function emo(e, cls = '') {
   return `<span class="emo ${cls}" aria-hidden="true">${esc(e || '✅')}</span>`;
 }
 
-function ring(done, total, size, stroke, color = 'var(--accent)') {
+// Dernière valeur affichée de chaque anneau ou barre, pour animer le passage à la nouvelle.
+const lastShown = new Map();
+
+function fromTo(key, now) {
+  if (!key) return [now, now];
+  const prev = lastShown.has(key) ? lastShown.get(key) : 0;
+  lastShown.set(key, now);
+  return [prev, now];
+}
+
+// key : si fourni, l'anneau se remplit depuis sa valeur précédente.
+function ring(done, total, size, stroke, color = 'var(--accent)', key = '') {
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
-  const pct = total ? done / total : 0;
+  const [from, pct] = fromTo(key, total ? done / total : 0);
+  const arc = (p) => (p * c).toFixed(2);
+  const hl = (p) => Math.max(0, p * c - stroke).toFixed(2);
+  const anim = from !== pct;
   return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">
     <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="var(--ring-track)" stroke-width="${stroke}"/>
-    <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}"
-      stroke-linecap="round" stroke-dasharray="${(pct * c).toFixed(2)} ${c.toFixed(2)}"
-      transform="rotate(-90 ${size / 2} ${size / 2})" style="${pct ? '' : 'opacity:0'}"/>
-    <circle class="ring-hl" cx="${size / 2}" cy="${size / 2}" r="${r - stroke * 0.18}" fill="none" stroke="#fff"
+    <circle class="arc" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}"
+      stroke-linecap="round" stroke-dasharray="${arc(from)} ${c.toFixed(2)}"${anim ? ` data-to="${arc(pct)} ${c.toFixed(2)}"` : ''}
+      transform="rotate(-90 ${size / 2} ${size / 2})" style="${from || pct ? '' : 'opacity:0'}"${!pct ? ' data-hide="1"' : ''}/>
+    <circle class="ring-hl arc" cx="${size / 2}" cy="${size / 2}" r="${r - stroke * 0.18}" fill="none" stroke="#fff"
       stroke-width="${(stroke * 0.28).toFixed(1)}" stroke-linecap="round"
-      stroke-dasharray="${Math.max(0, pct * c - stroke).toFixed(2)} ${c.toFixed(2)}" stroke-dashoffset="${(-stroke / 2).toFixed(2)}"
-      transform="rotate(-90 ${size / 2} ${size / 2})" style="${pct * c > stroke ? '' : 'opacity:0'}"/>
+      stroke-dasharray="${hl(from)} ${c.toFixed(2)}"${anim ? ` data-to="${hl(pct)} ${c.toFixed(2)}"` : ''} stroke-dashoffset="${(-stroke / 2).toFixed(2)}"
+      transform="rotate(-90 ${size / 2} ${size / 2})" style="${Math.max(from, pct) * c > stroke ? '' : 'opacity:0'}"${pct * c > stroke ? '' : ' data-hide="1"'}/>
   </svg>`;
+}
+
+// Lance les animations préparées (anneaux, barres) juste après l'affichage.
+function animateIn() {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    document.querySelectorAll('[data-to]').forEach((el) => {
+      el.setAttribute('stroke-dasharray', el.dataset.to);
+      el.removeAttribute('data-to');
+    });
+    document.querySelectorAll('[data-w]').forEach((el) => {
+      el.style.width = el.dataset.w;
+      el.removeAttribute('data-w');
+    });
+    // Un anneau qui revient à zéro disparaît une fois l'animation finie (pas de point rond).
+    setTimeout(() => document.querySelectorAll('[data-hide]').forEach((el) => { el.style.opacity = '0'; }), 650);
+  }));
+}
+
+// Petit rebond sur l'élément qui vient de changer.
+function pop(selector) {
+  const el = document.querySelector(selector);
+  if (!el) return;
+  el.classList.remove('just');
+  void el.offsetWidth;
+  el.classList.add('just');
+}
+
+// Changement d'écran ou de jour : fondu glissé (View Transitions si le navigateur le permet).
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+// "still" : l'écran est installé, les mises à jour sur place ne rejouent pas la cascade d'entrée.
+let stillTimer;
+function settleSoon() {
+  clearTimeout(stillTimer);
+  stillTimer = setTimeout(() => $view.classList.add('still'), 600);
+}
+
+function swap(fn, dir = 'up') {
+  document.documentElement.dataset.vt = dir;
+  $view.classList.remove('still');
+  settleSoon();
+  if (document.startViewTransition && !reducedMotion.matches) {
+    document.startViewTransition(fn);
+  } else {
+    fn();
+    if (!reducedMotion.matches) {
+      $view.classList.remove('enter');
+      void $view.offsetWidth;
+      $view.classList.add('enter');
+    }
+  }
 }
 
 function fmtDate(d, opts) {
@@ -213,7 +277,7 @@ function renderToday() {
     const p = dayProgress(data.habits, data.log, d);
     strip += `<button class="day${k === key ? ' sel' : ''}" data-act="pick-day" data-key="${k}" ${future ? 'disabled' : ''}>
       <span class="day-l">${DAY_LETTERS[i]}</span>
-      <span class="day-ring">${ring(p.done, p.total, 30, 3.5)}<span>${d.getDate()}</span></span>
+      <span class="day-ring">${ring(p.done, p.total, 30, 3.5, undefined, 'day-' + k)}<span>${d.getDate()}</span></span>
     </button>`;
   }
 
@@ -247,7 +311,7 @@ function renderToday() {
     </div>
     ${empty || `
     <section class="hero">
-      <div class="hero-ring">${ring(done, total, 168, 16)}
+      <div class="hero-ring">${ring(done, total, 168, 16, undefined, 'hero-' + key)}
         <div class="hero-txt"><strong>${done}/${total}</strong><span>${msg}</span></div>
       </div>
     </section>
@@ -258,6 +322,12 @@ function renderToday() {
     ${habits.length ? '' : '<p class="muted center">Aucune habitude prévue ce jour.</p>'}
     ${moodRow(key)}`}
   `;
+}
+
+function barHtml(k, pct) {
+  const [from, to] = fromTo(k, pct);
+  const w = (x) => `${(x * 100).toFixed(0)}%`;
+  return `<span class="bar"><span style="width:${w(from)}"${from !== to ? ` data-w="${w(to)}"` : ''}></span></span>`;
 }
 
 function tileHtml(h, d) {
@@ -274,7 +344,7 @@ function tileHtml(h, d) {
 
   if (kind === QUIT) {
     const slip = s === FAIL;
-    return `<div class="tile quit ${slip ? 'fail' : 'held'}" style="--c:${h.color}">
+    return `<div class="tile quit ${slip ? 'fail' : 'held'}" data-tile="${h.id}" style="--c:${h.color}">
       <button class="tile-main" data-act="day-sheet" data-id="${h.id}" aria-label="${esc(h.name)}">
         <span class="tile-top">${emo(h.icon)}<span class="badge">${slip ? 'Écart' : 'Tenu'}</span></span>
         <span class="tile-name">${esc(h.name)}</span>
@@ -288,12 +358,12 @@ function tileHtml(h, d) {
     const v = valueOf(data.log, h, key);
     const pct = Math.min(1, v / (h.target || 1));
     const badge = s === DONE ? 'Fait' : s === FAIL ? 'Pas fait' : s === SKIP ? 'Sauté' : met ? 'Objectif atteint' : '';
-    return `<div class="tile count ${s || (v ? 'part' : 'todo')}${met ? ' met' : ''}" style="--c:${h.color}">
+    return `<div class="tile count ${s || (v ? 'part' : 'todo')}${met ? ' met' : ''}" data-tile="${h.id}" style="--c:${h.color}">
       <button class="tile-main" data-act="plus" data-id="${h.id}" aria-label="Ajouter ${fmtNum(h.step || 1)} à ${esc(h.name)}">
         <span class="tile-top">${emo(h.icon)}${badge ? `<span class="badge">${badge}</span>` : ''}</span>
         <span class="tile-name">${esc(h.name)}</span>
         <span class="tile-sub">${fmtNum(v)} / ${fmtNum(h.target)} ${esc(h.unit || '')}${weekly ? ` · ${wd}/${h.perWeek} sem.` : ''}${noteTag}</span>
-        <span class="bar"><span style="width:${(pct * 100).toFixed(0)}%"></span></span>
+        ${barHtml('bar-' + h.id + key, pct)}
       </button>
       <button class="tile-more" data-act="day-sheet" data-id="${h.id}" aria-label="Plus d'options">•••</button>
       ${v > 0 ? `<button class="tile-minus" data-act="minus" data-id="${h.id}" aria-label="Retirer ${fmtNum(h.step || 1)}">−</button>` : ''}
@@ -302,7 +372,7 @@ function tileHtml(h, d) {
 
   const badge = s === DONE ? 'Fait' : s === FAIL ? 'Pas fait' : s === SKIP ? 'Sauté' : met ? 'Objectif atteint' : '';
   const sub = weekly ? `${wd}/${h.perWeek} cette semaine` : streakLabel(h, streak);
-  return `<div class="tile ${s || 'todo'}${met ? ' met' : ''}" style="--c:${h.color}">
+  return `<div class="tile ${s || 'todo'}${met ? ' met' : ''}" data-tile="${h.id}" style="--c:${h.color}">
     <button class="tile-main" data-act="toggle" data-id="${h.id}" aria-label="${esc(h.name)} : ${badge || 'à faire'}">
       <span class="tile-top">${emo(h.icon)}${badge ? `<span class="badge">${badge}</span>` : ''}</span>
       <span class="tile-name">${esc(h.name)}</span>
@@ -392,7 +462,7 @@ function routineCard(name, steps, d, isToday) {
   const rows = steps.map((h, i) => {
     const s = st[i];
     const mark = s === DONE ? icon('check', 'ic sm') : s === FAIL ? '✕' : s === SKIP ? '–' : '';
-    return `<div class="step ${s || 'todo'}">
+    return `<div class="step ${s || 'todo'}" data-tile="${h.id}">
       <button class="step-main" data-act="toggle" data-id="${h.id}">
         <span class="chk">${mark}</span>${emo(h.icon, 'sm')}<span class="step-name">${esc(h.name)}</span>
         ${h.minutes ? `<span class="step-min">${h.minutes} min</span>` : ''}
@@ -402,7 +472,7 @@ function routineCard(name, steps, d, isToday) {
   }).join('');
   return `<section class="routine" style="--c:${steps[0].color}">
     <div class="r-head">
-      <div class="r-ring">${ring(done, counted, 52, 6, 'var(--c)')}<span>${done}/${counted}</span></div>
+      <div class="r-ring">${ring(done, counted, 52, 6, 'var(--c)', 'r-' + name + key)}<span>${done}/${counted}</span></div>
       <div class="r-title"><h2>${esc(name)}</h2>
         <p>${mins ? `${mins} min · ` : ''}${streak ? `${streak} j complets de suite` : 'Pas encore de série'}</p></div>
     </div>
@@ -665,7 +735,7 @@ function reviewCard() {
       </div>
     </div>
     <div class="review-main">
-      <div class="r-ring big">${ring(r.done, r.total, 72, 8)}<span>${r.rate === null ? '–' : r.rate + ' %'}</span></div>
+      <div class="r-ring big">${ring(r.done, r.total, 72, 8, undefined, 'review' + ui.reviewWeek)}<span>${r.rate === null ? '–' : r.rate + ' %'}</span></div>
       <p>${r.total ? `${r.done} réussites sur ${r.total}` : 'Pas encore de données cette semaine.'}</p>
     </div>
     ${lines.length ? `<ul class="review-list">${lines.join('')}</ul>` : ''}
@@ -717,7 +787,7 @@ function renderCalendar() {
         <span><i class="cell done"></i>Fait</span><span><i class="cell fail"></i>Pas fait</span>
         <span><i class="cell skip"></i>Sauté</span><span><i class="cell part"></i>En partie</span><span><i class="cell miss"></i>Non renseigné</span>
       </div>
-      <p class="hint">Touchez un jour pour le modifier.</p>${routines}${cards}`
+      <p class="hint">Touchez un jour pour le modifier.</p><div class="cards">${routines}${cards}</div>`
     : '<p class="muted center pad">Ajoutez une habitude pour voir vos séries ici.</p>'}
   `;
 }
@@ -953,7 +1023,10 @@ function openSheet() {
 }
 
 function closeSheet() {
-  if ($sheet.open) $sheet.close();
+  if (!$sheet.open || $sheet.classList.contains('closing')) return;
+  if (reducedMotion.matches) { $sheet.close(); return; }
+  $sheet.classList.add('closing');
+  setTimeout(() => { $sheet.classList.remove('closing'); $sheet.close(); }, 180);
 }
 
 $sheet.addEventListener('click', (e) => {
@@ -973,6 +1046,9 @@ function render() {
   else renderHabits();
 }
 
+// À chaque nouvel affichage de l'écran, lancer les animations préparées.
+new MutationObserver(animateIn).observe($view, { childList: true });
+
 function habitById(id) {
   return data.habits.find((h) => h.id === id);
 }
@@ -980,10 +1056,15 @@ function habitById(id) {
 document.addEventListener('click', (e) => {
   const tab = e.target.closest('.tab');
   if (tab) {
-    ui.tab = tab.dataset.tab;
-    if (ui.tab === 'today') ui.date = today();
-    render();
-    window.scrollTo(0, 0);
+    const order = ['today', 'calendar', 'habits'];
+    const dir = order.indexOf(tab.dataset.tab) >= order.indexOf(ui.tab) ? 'left' : 'right';
+    if (tab.dataset.tab === ui.tab && ui.tab !== 'today') { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+    swap(() => {
+      ui.tab = tab.dataset.tab;
+      if (ui.tab === 'today') ui.date = today();
+      render();
+      window.scrollTo(0, 0);
+    }, dir);
     return;
   }
   const el = e.target.closest('[data-act]');
@@ -998,6 +1079,7 @@ document.addEventListener('click', (e) => {
       withCelebration(() => setStatus(h, key, s === DONE ? null : DONE));
       if (navigator.vibrate) navigator.vibrate(10);
       renderToday();
+      pop(`[data-tile="${h.id}"]`);
       break;
     }
     case 'plus':
@@ -1009,6 +1091,7 @@ document.addEventListener('click', (e) => {
       if (navigator.vibrate) navigator.vibrate(8);
       if ($sheet.open) openDaySheet(h);
       renderToday();
+      if (!$sheet.open) pop(`[data-tile="${h.id}"]`);
       break;
     }
     case 'day-sheet': openDaySheet(h); break;
@@ -1031,21 +1114,26 @@ document.addEventListener('click', (e) => {
       else data.moods[key] = m;
       save();
       renderToday();
+      pop(`.mood-b[data-m="${m}"]`);
       break;
     }
-    case 'open-review': ui.tab = 'calendar'; ui.reviewWeek = 0; render(); window.scrollTo(0, 0); break;
+    case 'open-review': swap(() => { ui.tab = 'calendar'; ui.reviewWeek = 0; render(); window.scrollTo(0, 0); }, 'left'); break;
     case 'review-week': ui.reviewWeek = Number(el.dataset.w); renderCalendar(); break;
     case 'd-type': sheetDraft.type = el.dataset.v; drawEditSheet(); break;
     case 'd-freq': sheetDraft.perWeek = el.dataset.v === 'week' ? sheetDraft.perWeek || 3 : null; drawEditSheet(); break;
     case 'd-per': sheetDraft.perWeek = Math.min(6, Math.max(1, (sheetDraft.perWeek || 3) + Number(el.dataset.dir))); drawEditSheet(); break;
-    case 'pick-day': ui.date = parseKey(el.dataset.key); renderToday(); break;
-    case 'week': {
-      const d = addDays(ui.date, 7 * Number(el.dataset.dir));
-      ui.date = dkey(d) > dkey(today()) ? today() : d;
-      renderToday();
+    case 'pick-day': {
+      const nd = parseKey(el.dataset.key);
+      if (dkey(nd) === key) break;
+      swap(() => { ui.date = nd; renderToday(); }, nd < ui.date ? 'right' : 'left');
       break;
     }
-    case 'goto': ui.date = parseKey(el.dataset.key); ui.tab = 'today'; render(); window.scrollTo(0, 0); break;
+    case 'week': {
+      const d = addDays(ui.date, 7 * Number(el.dataset.dir));
+      swap(() => { ui.date = dkey(d) > dkey(today()) ? today() : d; renderToday(); }, Number(el.dataset.dir) < 0 ? 'right' : 'left');
+      break;
+    }
+    case 'goto': swap(() => { ui.date = parseKey(el.dataset.key); ui.tab = 'today'; render(); window.scrollTo(0, 0); }, 'right'); break;
     case 'new-habit': openEditSheet(null); break;
     case 'seed': seed(); render(); break;
     case 'start-routine': startRoutine(el.dataset.g); break;
@@ -1181,6 +1269,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 render();
+settleSoon();
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('./sw.js');
