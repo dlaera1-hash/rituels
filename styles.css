@@ -674,3 +674,15 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 @media (min-width: 700px) {
   .sheet { max-height: min(85vh, calc(var(--vvh, 100dvh) - 40px)); }
 }
+
+/* Page figée sur iPhone : le fond, la barre d'onglets et la page ne bougent plus.
+   Seul le cadre du contenu défile, verticalement, sans rebond. */
+html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+body { position: fixed; inset: 0; width: 100%; }
+.scroller {
+  position: fixed; inset: 0;
+  overflow-x: hidden; overflow-y: auto;
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}

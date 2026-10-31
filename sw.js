@@ -1,6 +1,6 @@
 // Garde l'appli en cache pour qu'elle s'ouvre sans réseau.
 // Changer VERSION à chaque mise à jour des fichiers pour forcer le rafraîchissement.
-const VERSION = 'rituels-v9';
+const VERSION = 'rituels-v10';
 const FILES = [
   './',
   './index.html',

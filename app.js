@@ -127,6 +127,7 @@ function today() {
 }
 
 const $view = document.getElementById('view');
+const $scroller = document.getElementById('scroller');
 const $sheet = document.getElementById('sheet');
 const $sheetBody = document.getElementById('sheet-body');
 
@@ -1104,12 +1105,12 @@ document.addEventListener('click', (e) => {
   if (tab) {
     const order = ['today', 'calendar', 'habits'];
     const dir = order.indexOf(tab.dataset.tab) >= order.indexOf(ui.tab) ? 'left' : 'right';
-    if (tab.dataset.tab === ui.tab && ui.tab !== 'today') { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+    if (tab.dataset.tab === ui.tab && ui.tab !== 'today') { $scroller.scrollTo({ top: 0, behavior: 'smooth' }); return; }
     swap(() => {
       ui.tab = tab.dataset.tab;
       if (ui.tab === 'today') ui.date = today();
       render();
-      window.scrollTo(0, 0);
+      $scroller.scrollTo(0, 0);
     }, dir);
     return;
   }
@@ -1163,7 +1164,7 @@ document.addEventListener('click', (e) => {
       pop(`.mood-b[data-m="${m}"]`);
       break;
     }
-    case 'open-review': swap(() => { ui.tab = 'calendar'; ui.reviewWeek = 0; render(); window.scrollTo(0, 0); }, 'left'); break;
+    case 'open-review': swap(() => { ui.tab = 'calendar'; ui.reviewWeek = 0; render(); $scroller.scrollTo(0, 0); }, 'left'); break;
     case 'review-week': ui.reviewWeek = Number(el.dataset.w); renderCalendar(); break;
     case 'd-type': sheetDraft.type = el.dataset.v; drawEditSheet(); break;
     case 'd-freq': sheetDraft.perWeek = el.dataset.v === 'week' ? sheetDraft.perWeek || 3 : null; drawEditSheet(); break;
@@ -1179,7 +1180,7 @@ document.addEventListener('click', (e) => {
       swap(() => { ui.date = dkey(d) > dkey(today()) ? today() : d; renderToday(); }, Number(el.dataset.dir) < 0 ? 'right' : 'left');
       break;
     }
-    case 'goto': swap(() => { ui.date = parseKey(el.dataset.key); ui.tab = 'today'; render(); window.scrollTo(0, 0); }, 'right'); break;
+    case 'goto': swap(() => { ui.date = parseKey(el.dataset.key); ui.tab = 'today'; render(); $scroller.scrollTo(0, 0); }, 'right'); break;
     case 'new-habit': openEditSheet(null); break;
     case 'seed': seed(); render(); break;
     case 'start-routine': startRoutine(el.dataset.g); break;
@@ -1335,3 +1336,6 @@ settleSoon();
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('./sw.js');
 }
+
+// Bloque le zoom à deux doigts sur iPhone : l'appli reste à sa taille.
+['gesturestart', 'gesturechange'].forEach((t) => document.addEventListener(t, (e) => e.preventDefault(), { passive: false }));
