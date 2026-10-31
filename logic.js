@@ -48,9 +48,19 @@ export function isWeekly(h) {
   return kindOf(h) !== QUIT && h.perWeek > 0;
 }
 
+// Habitude "X fois par mois" (épargne, bilan…) : prévue tous les jours, réussie au mois.
+export function isMonthly(h) {
+  return kindOf(h) !== QUIT && !(h.perWeek > 0) && h.perMonth > 0;
+}
+
+// Période d'une habitude à objectif : 'week', 'month' ou null (jours fixes, à arrêter).
+export function periodOf(h) {
+  return isWeekly(h) ? 'week' : isMonthly(h) ? 'month' : null;
+}
+
 export function isScheduled(h, d) {
   if (h.archived || dkey(d) < h.createdAt) return false;
-  if (kindOf(h) === QUIT || isWeekly(h)) return true;
+  if (kindOf(h) === QUIT || isWeekly(h) || isMonthly(h)) return true;
   return h.days.includes(weekday(d));
 }
 
@@ -114,12 +124,72 @@ function weeklyBest(h, log, today) {
   return best;
 }
 
+// ---------- Mois (habitudes "X fois par mois") ----------
+
+export function startOfMonth(d) {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+
+function endOfMonth(d) {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0);
+}
+
+// Nombre de jours faits dans le mois de d, du 1er jusqu'à d inclus.
+export function monthDone(h, log, d) {
+  let n = 0;
+  const end = dkey(d);
+  for (let x = startOfMonth(d); dkey(x) <= end; x = addDays(x, 1)) {
+    if (statusFor(h, log, dkey(x)) === DONE) n++;
+  }
+  return n;
+}
+
+// Fait dans la période en cours (semaine ou mois), et objectif de la période.
+export function periodDone(h, log, d) {
+  return isWeekly(h) ? weekDone(h, log, d) : isMonthly(h) ? monthDone(h, log, d) : 0;
+}
+
+export function periodTarget(h) {
+  return isWeekly(h) ? h.perWeek : isMonthly(h) ? h.perMonth : 0;
+}
+
+// Jours restants dans la période, aujourd'hui compris.
+export function periodLeft(h, d) {
+  if (isWeekly(h)) return 7 - weekday(d);
+  if (isMonthly(h)) return endOfMonth(d).getDate() - d.getDate() + 1;
+  return 0;
+}
+
+// Mois consécutifs réussis ; le mois en cours compte s'il est déjà réussi et ne casse rien sinon.
+function monthlyStreak(h, log, today) {
+  let n = monthDone(h, log, today) >= h.perMonth ? 1 : 0;
+  for (let m = addDays(startOfMonth(today), -1); dkey(m) >= h.createdAt; m = addDays(startOfMonth(m), -1)) {
+    if (monthDone(h, log, m) >= h.perMonth) n++;
+    else break;
+  }
+  return n;
+}
+
+function monthlyBest(h, log, today) {
+  let best = 0;
+  let run = 0;
+  const cur = dkey(startOfMonth(today));
+  for (let m = startOfMonth(parseKey(h.createdAt)); dkey(m) <= cur; m = new Date(m.getFullYear(), m.getMonth() + 1, 1)) {
+    const isCurrent = dkey(m) === cur;
+    const ok = monthDone(h, log, isCurrent ? today : endOfMonth(m)) >= h.perMonth;
+    if (ok) { run++; best = Math.max(best, run); }
+    else if (!isCurrent) run = 0;
+  }
+  return best;
+}
+
 // ---------- Séries et taux ----------
 
 // Série en cours (en jours, ou en semaines pour une habitude hebdomadaire).
 // "Sauté" ne casse pas la série. Aujourd'hui non renseigné ne la casse pas non plus.
 export function currentStreak(h, log, today) {
   if (isWeekly(h)) return weeklyStreak(h, log, today);
+  if (isMonthly(h)) return monthlyStreak(h, log, today);
   let n = 0;
   let d = today;
   for (let i = 0; i < 3700; i++) {
@@ -139,6 +209,7 @@ export function currentStreak(h, log, today) {
 
 export function bestStreak(h, log, today) {
   if (isWeekly(h)) return weeklyBest(h, log, today);
+  if (isMonthly(h)) return monthlyBest(h, log, today);
   let best = 0;
   let run = 0;
   const end = dkey(today);
@@ -157,7 +228,7 @@ export function bestStreak(h, log, today) {
 // Taux de réussite sur les N derniers jours (hors jours sautés, hors aujourd'hui
 // s'il n'est pas encore renseigné). Renvoie null si aucun jour à compter.
 export function successRate(h, log, today, days = 30) {
-  if (isWeekly(h)) {
+  if (isWeekly(h) || isMonthly(h)) {
     let done = 0;
     let span = 0;
     for (let i = 0; i < days; i++) {
@@ -167,7 +238,8 @@ export function successRate(h, log, today, days = 30) {
       if (statusFor(h, log, k) === DONE) done++;
     }
     if (!span) return null;
-    return Math.min(100, Math.round((done / ((h.perWeek * span) / 7)) * 100));
+    const expected = isWeekly(h) ? (h.perWeek * span) / 7 : (h.perMonth * span) / 30.44;
+    return Math.min(100, Math.round((done / expected) * 100));
   }
   let done = 0;
   let total = 0;
@@ -193,6 +265,11 @@ function countsForDay(h, log, d) {
   const s = statusFor(h, log, dkey(d));
   if (s === SKIP) return false;
   if (isWeekly(h) && s !== DONE && weekDone(h, log, d) >= h.perWeek) return false;
+  // Mensuelle : dans l'anneau le jour où elle est faite, ou quand il ne reste plus que le temps juste.
+  if (isMonthly(h) && s !== DONE) {
+    const need = h.perMonth - monthDone(h, log, d);
+    return need > 0 && need >= periodLeft(h, d);
+  }
   return true;
 }
 
@@ -262,9 +339,9 @@ export function atRisk(habits, log, today) {
   for (const h of habits) {
     if (!isScheduled(h, today) || kindOf(h) === QUIT) continue;
     if (statusFor(h, log, k)) continue;
-    if (isWeekly(h)) {
-      const need = h.perWeek - weekDone(h, log, today);
-      const left = 7 - weekday(today);
+    if (isWeekly(h) || isMonthly(h)) {
+      const need = periodTarget(h) - periodDone(h, log, today);
+      const left = periodLeft(h, today);
       if (need > 0 && need >= left) out.push({ h, need, left });
     } else {
       const streak = currentStreak(h, log, today);
@@ -299,6 +376,7 @@ export function weekReview(habits, log, moods, ws, today) {
 
   // Taux par habitude, pour repérer celle qui décroche
   const perHabit = active.map((h) => {
+    if (isMonthly(h)) return { h, rate: null }; // jugée au mois, pas à la semaine
     if (isWeekly(h)) {
       const n = weekDone(h, log, days[days.length - 1] || ws);
       return { h, done: n, total: h.perWeek, rate: Math.min(1, n / h.perWeek) };
@@ -320,7 +398,7 @@ export function weekReview(habits, log, moods, ws, today) {
   let best = null;
   for (const h of active) {
     const n = currentStreak(h, log, today);
-    if (n > 0 && (!best || n > best.streak)) best = { h, streak: n, weekly: isWeekly(h) };
+    if (n > 0 && (!best || n > best.streak)) best = { h, streak: n, weekly: isWeekly(h), monthly: isMonthly(h) };
   }
 
   // Jour de la semaine le plus faible sur les 4 dernières semaines (hors aujourd'hui)
@@ -453,4 +531,18 @@ export function goalSeries(g, habits, log, today) {
   };
   return [...days].filter((k) => k >= g.createdAt && k <= end).sort()
     .map((k) => ({ d: k, v: manualAt(k) + goalLinked(g, habits, log, k) }));
+}
+
+// Avancement (0 à 1) dans le temps, pour la mini courbe d'un objectif.
+// Chiffré : à partir des montants ; étapes ou estimation : à partir des avancements enregistrés (phist).
+export function goalProgressSeries(g, habits, log, today) {
+  if (g.kind === AMOUNT) {
+    if (!(g.target > 0)) return [];
+    return goalSeries(g, habits, log, today).map((p) => ({ d: p.d, p: clamp01(p.v / g.target) }));
+  }
+  const end = dkey(today);
+  const pts = (g.phist && g.phist.length ? [...g.phist] : [{ d: g.createdAt, p: Number(g.startPct) || 0 }])
+    .filter((x) => x.d <= end).sort((a, b) => (a.d < b.d ? -1 : 1));
+  if (pts[pts.length - 1].d !== end) pts.push({ d: end, p: goalProgress(g) });
+  return pts.map((x) => ({ d: x.d, p: clamp01(x.p) }));
 }

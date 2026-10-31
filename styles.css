@@ -849,3 +849,11 @@ input[type="range"], [data-glass] input[type="range"] {
 .gc-tip[hidden] { display: none; }
 /* Le bouton qui reçoit le focus à l'ouverture (pour ne pas sortir le clavier) n'a pas besoin d'être entouré */
 .sheet [autofocus]:focus:not(:focus-visible), .sheet [autofocus]:focus { outline: none; }
+
+/* Mini courbe sur la carte d'un objectif */
+.g-spark { display: block; width: 100%; height: auto; margin-top: 10px; overflow: visible; }
+.sp-goal { stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 4; }
+.sp-line { fill: none; stroke: var(--c); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.sp-dot { fill: var(--c); stroke: var(--surface); stroke-width: 2; }
+.goal-foot > span:first-child { min-width: 0; }
+.g-chain { font-size: 12px; margin-left: 2px; }

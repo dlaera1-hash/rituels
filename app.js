@@ -3,8 +3,9 @@ import {
   isScheduled, statusOf, currentStreak, bestStreak, successRate, dayProgress,
   groupStatus, groupStreak, PARTIAL,
   CHECK, COUNT, QUIT, kindOf, isWeekly, valueOf, statusFor, statusForValue, weekDone, atRisk, weekReview,
-  AMOUNT, STEPS, MANUAL, goalProgress, goalPace, goalsOverall, goalLinked, goalSeries,
-} from './logic.js?v=12'; // numéro à changer avec VERSION dans sw.js : évite un vieux fichier en cache
+  isMonthly, periodOf, periodDone, periodTarget,
+  AMOUNT, STEPS, MANUAL, goalProgress, goalPace, goalsOverall, goalLinked, goalSeries, goalProgressSeries,
+} from './logic.js?v=13'; // numéro à changer avec VERSION dans sw.js : évite un vieux fichier en cache
 
 // ---------- Données ----------
 
@@ -235,11 +236,13 @@ function freqLabel(h) {
   if (kindOf(h) === QUIT) return 'À arrêter';
   const goal = kindOf(h) === COUNT ? `Objectif ${fmtNum(h.target)}${h.unit ? ' ' + h.unit : ''} · ` : '';
   if (isWeekly(h)) return `${goal}${h.perWeek} fois par semaine`;
+  if (isMonthly(h)) return `${goal}${h.perMonth} fois par mois`;
   return goal + daysLabel(h.days);
 }
 
 function streakLabel(h, n) {
   if (isWeekly(h)) return n ? `${n} sem. de suite` : 'Pas de série';
+  if (isMonthly(h)) return n ? `${n} mois de suite` : 'Pas de série';
   if (kindOf(h) === QUIT) return `${n} j sans`;
   return n ? `${n} j de suite` : 'Pas de série';
 }
@@ -340,9 +343,12 @@ function tileHtml(h, d) {
   const s = statusFor(h, data.log, key);
   const note = data.log[key]?.[h.id]?.note;
   const streak = currentStreak(h, data.log, t);
-  const weekly = isWeekly(h);
-  const wd = weekly ? weekDone(h, data.log, d) : 0;
-  const met = weekly && s !== DONE && wd >= h.perWeek;
+  // Habitude « X fois par semaine / par mois » : où en est la période en cours.
+  const weekly = !!periodOf(h);
+  const wd = weekly ? periodDone(h, data.log, d) : 0;
+  const per = periodTarget(h);
+  const pu = isMonthly(h) ? 'mois' : 'sem.';
+  const met = weekly && s !== DONE && wd >= per;
   const noteTag = note ? ' · note' : '';
 
   if (kind === QUIT) {
@@ -365,7 +371,7 @@ function tileHtml(h, d) {
       <button class="tile-main" data-act="plus" data-id="${h.id}" aria-label="Ajouter ${fmtNum(h.step || 1)} à ${esc(h.name)}">
         <span class="tile-top">${emo(h.icon)}${badge ? `<span class="badge">${badge}</span>` : ''}</span>
         <span class="tile-name">${esc(h.name)}</span>
-        <span class="tile-sub">${fmtNum(v)} / ${fmtNum(h.target)} ${esc(h.unit || '')}${weekly ? ` · ${wd}/${h.perWeek} sem.` : ''}${noteTag}</span>
+        <span class="tile-sub">${fmtNum(v)} / ${fmtNum(h.target)} ${esc(h.unit || '')}${weekly ? ` · ${wd}/${per} ${pu}` : ''}${noteTag}</span>
         ${barHtml('bar-' + h.id + key, pct)}
       </button>
       <button class="tile-more" data-act="day-sheet" data-id="${h.id}" aria-label="Plus d'options">•••</button>
@@ -374,7 +380,7 @@ function tileHtml(h, d) {
   }
 
   const badge = s === DONE ? 'Fait' : s === FAIL ? 'Pas fait' : s === SKIP ? 'Sauté' : met ? 'Objectif atteint' : '';
-  const sub = weekly ? `${wd}/${h.perWeek} cette semaine` : streakLabel(h, streak);
+  const sub = weekly ? `${wd}/${per} ${isMonthly(h) ? 'ce mois-ci' : 'cette semaine'}` : streakLabel(h, streak);
   return `<div class="tile ${s || 'todo'}${met ? ' met' : ''}" data-tile="${h.id}" style="--c:${h.color}">
     <button class="tile-main" data-act="toggle" data-id="${h.id}" aria-label="${esc(h.name)} : ${badge || 'à faire'}">
       <span class="tile-top">${emo(h.icon)}${badge ? `<span class="badge">${badge}</span>` : ''}</span>
@@ -725,7 +731,7 @@ function reviewCard() {
   const label = ui.reviewWeek === 0 ? 'Cette semaine' : 'Semaine dernière';
   const range = `du ${fmtDate(ws, { day: 'numeric', month: 'short' })} au ${fmtDate(addDays(ws, 6), { day: 'numeric', month: 'short' })}`;
   const lines = [];
-  if (r.best) lines.push(`<li>${emo(r.best.h.icon, 'sm')} Meilleure série : <strong>${esc(r.best.h.name)}</strong>, ${r.best.streak} ${r.best.weekly ? 'semaine' : 'jour'}${r.best.streak > 1 ? 's' : ''}</li>`);
+  if (r.best) lines.push(`<li>${emo(r.best.h.icon, 'sm')} Meilleure série : <strong>${esc(r.best.h.name)}</strong>, ${r.best.streak} ${r.best.monthly ? 'mois' : `${r.best.weekly ? 'semaine' : 'jour'}${r.best.streak > 1 ? 's' : ''}`}</li>`);
   if (r.weakest) lines.push(`<li>${emo(r.weakest.h.icon, 'sm')} À relancer : <strong>${esc(r.weakest.h.name)}</strong>, ${r.weakest.done} sur ${r.weakest.total}</li>`);
   if (r.weakDay) lines.push(`<li>📅 Votre jour le plus difficile : <strong>le ${WEEKDAY_NAMES[r.weakDay.day]}</strong> (${Math.round(r.weakDay.rate * 100)} % sur 4 semaines)</li>`);
   if (r.moodAvg) lines.push(`<li>${emo(MOODS[Math.round(r.moodAvg) - 1], 'sm')} Humeur moyenne : <strong>${r.moodAvg.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} / 5</strong></li>`);
@@ -764,7 +770,7 @@ function renderCalendar() {
         const s = statusFor(h, data.log, k);
         const part = kindOf(h) === COUNT && valueOf(data.log, h, k) > 0;
         cls = s === DONE ? 'done' : s === SKIP ? 'skip' : s === FAIL ? 'fail' : part ? 'part'
-          : k === dkey(t) ? 'todo' : isWeekly(h) ? 'rest' : 'miss';
+          : k === dkey(t) ? 'todo' : periodOf(h) ? 'rest' : 'miss';
       }
       const clickable = cls !== 'off';
       cells += `<span class="cell ${cls}"${clickable ? ` data-act="goto" data-key="${k}"` : ''}></span>`;
@@ -772,7 +778,7 @@ function renderCalendar() {
     const cur = currentStreak(h, data.log, t);
     const best = bestStreak(h, data.log, t);
     const rate = successRate(h, data.log, t, 30);
-    const u = isWeekly(h) ? 'sem.' : 'j';
+    const u = isWeekly(h) ? 'sem.' : isMonthly(h) ? 'mois' : 'j';
     return `<article class="card" style="--c:${h.color}">
       <div class="card-head">${emo(h.icon)}<h2>${esc(h.name)}</h2><span class="card-sub">${esc(freqLabel(h))}</span></div>
       <div class="stats">
@@ -805,7 +811,7 @@ function renderHabits() {
   const row = (h) => `<button class="row" data-act="edit" data-id="${h.id}" style="--c:${h.color}">
       <span class="row-ic">${emo(h.icon)}</span>
       <span class="row-txt"><strong>${esc(h.name)}</strong><span>${h.group ? `${esc(h.group)} · ` : ''}${esc(freqLabel(h))}</span></span>
-      <span class="row-streak">${h.archived ? 'Archivée' : currentStreak(h, data.log, t) + (isWeekly(h) ? ' sem.' : ' j')}</span>
+      <span class="row-streak">${h.archived ? 'Archivée' : currentStreak(h, data.log, t) + (isWeekly(h) ? ' sem.' : isMonthly(h) ? ' mois' : ' j')}</span>
     </button>`;
 
   $view.innerHTML = `
@@ -875,6 +881,30 @@ function goalDetail(g) {
   return `${fmtNum(g.current)}${u} sur ${fmtNum(g.target)}${u}`;
 }
 
+// Mini courbe de la carte : l'avancement dans le temps, de la création à aujourd'hui.
+// Rien à montrer (un seul point, ou aucun changement) : la barre suffit.
+function goalSpark(g, t) {
+  const stored = data.goals.find((x) => x.id === g.id) || g;
+  const pts = goalProgressSeries(stored, data.habits, data.log, t);
+  if (pts.length < 2 || pts.every((p) => p.p === pts[0].p)) return '';
+  const W = 300, H = 52, T = 5, B = 4;
+  const t0 = parseKey(pts[0].d).getTime();
+  const t1 = Math.max(parseKey(pts[pts.length - 1].d).getTime(), t0 + 864e5);
+  const X = (k) => 3 + ((parseKey(k).getTime() - t0) / (t1 - t0)) * (W - 7);
+  const Y = (p) => T + (1 - p) * (H - T - B);
+  let line = `M${X(pts[0].d).toFixed(1)},${Y(pts[0].p).toFixed(1)}`;
+  for (const p of pts.slice(1)) line += `H${X(p.d).toFixed(1)}V${Y(p.p).toFixed(1)}`;
+  const last = pts[pts.length - 1];
+  const gid = `sp-${g.id}`;
+  return `<svg class="g-spark" viewBox="0 0 ${W} ${H}" role="img" aria-label="Progression : de ${pctLabel(pts[0].p)} à ${pctLabel(last.p)}">
+    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--c);stop-opacity:0.3"/><stop offset="1" style="stop-color:var(--c);stop-opacity:0"/></linearGradient></defs>
+    <line class="sp-goal" x1="0" x2="${W}" y1="${T}" y2="${T}"/>
+    <path d="${line}V${H - B}H${X(pts[0].d).toFixed(1)}Z" fill="url(#${gid})"/>
+    <path class="sp-line" d="${line}"/>
+    <circle class="sp-dot" cx="${X(last.d).toFixed(1)}" cy="${Y(last.p).toFixed(1)}" r="3.5"/>
+  </svg>`;
+}
+
 function goalCard(g, t) {
   const [, label, e, color] = goalCat(g);
   const p = goalProgress(g);
@@ -885,8 +915,8 @@ function goalCard(g, t) {
       <span class="goal-txt"><strong>${esc(g.name)}</strong><span>${label} · ${dueLabel(g.due)}</span></span>
       <span class="goal-pct">${pctLabel(p)}</span>
     </span>
-    ${barHtml('goal-' + g.id, p)}
-    <span class="goal-foot"><span>${goalDetail(g)}${linkedHabits(g).length ? ' · habitude liée' : ''}</span><span class="pace pace-${pace.state}">${PACE[pace.state]}</span></span>
+    ${goalSpark(g, t) || barHtml('goal-' + g.id, p)}
+    <span class="goal-foot"><span>${goalDetail(g)}${linkedHabits(g).length ? ' <span class="g-chain" title="Habitude liée" aria-label="Habitude liée">🔗</span>' : ''}</span><span class="pace pace-${pace.state}">${PACE[pace.state]}</span></span>
   </button>`;
 }
 
@@ -1044,7 +1074,7 @@ function goalChart(d) {
   return `<figure class="g-chart" style="--c:${goalCat(g)[3]}" data-tips="${esc(JSON.stringify(tips))}">
     <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(`Évolution : ${fmtNum(pts[0].v)}${u} le ${short(pts[0].d)}, ${fmtNum(now.v)}${u} aujourd'hui, cible ${fmtNum(g.target)}${u}`)}">
       <defs><linearGradient id="g-fill" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="var(--c)" stop-opacity="0.28"/><stop offset="1" stop-color="var(--c)" stop-opacity="0.02"/>
+        <stop offset="0" style="stop-color:var(--c);stop-opacity:0.28"/><stop offset="1" style="stop-color:var(--c);stop-opacity:0.02"/>
       </linearGradient></defs>
       <line class="gc-base" x1="${L}" x2="${W - R}" y1="${Y(0)}" y2="${Y(0)}"/>
       <line class="gc-target" x1="${L}" x2="${W - R}" y1="${Y(g.target)}" y2="${Y(g.target)}"/>
@@ -1129,17 +1159,18 @@ function drawEditSheet() {
   const kind = d.type || CHECK;
   const groups = [...new Set([...data.habits.map((h) => h.group).filter(Boolean)])];
   const typeSeg = (v, label) => `<button class="seg${kind === v ? ' on' : ''}" data-act="d-type" data-v="${v}">${label}</button>`;
-  const freqSeg = (weekly, label) => `<button class="seg${!!d.perWeek === weekly ? ' on' : ''}" data-act="d-freq" data-v="${weekly ? 'week' : 'days'}">${label}</button>`;
+  const freqMode = d.perWeek ? 'week' : d.perMonth ? 'month' : 'days';
+  const freqSeg = (v, label) => `<button class="seg${freqMode === v ? ' on' : ''}" data-act="d-freq" data-v="${v}">${label}</button>`;
   const countFields = kind === COUNT ? `<div class="three-f">
       <label class="field"><span>Objectif</span><input id="h-target" type="number" inputmode="decimal" step="any" min="0" value="${d.target || ''}" placeholder="2"></label>
       <label class="field"><span>Unité</span><input id="h-unit" value="${esc(d.unit || '')}" placeholder="L, pages" maxlength="12" autocomplete="off"></label>
       <label class="field"><span>Par appui</span><input id="h-step" type="number" inputmode="decimal" step="any" min="0" value="${d.step || ''}" placeholder="1"></label>
     </div>` : '';
   const freq = kind === QUIT ? '<p class="muted small">Suivie tous les jours : chaque jour sans écart compte.</p>' : `
-    <div class="field"><span>Fréquence</span><div class="segs two-s">${freqSeg(false, 'Jours fixes')}${freqSeg(true, 'X fois par semaine')}</div></div>
-    ${d.perWeek ? `<div class="field"><span>Nombre de fois par semaine</span><div class="stepper">
+    <div class="field"><span>Fréquence</span><div class="segs three-s">${freqSeg('days', 'Jours fixes')}${freqSeg('week', 'Par semaine')}${freqSeg('month', 'Par mois')}</div></div>
+    ${freqMode !== 'days' ? `<div class="field"><span>Nombre de fois par ${freqMode === 'week' ? 'semaine' : 'mois'}</span><div class="stepper">
         <button class="btn" data-act="d-per" data-dir="-1" aria-label="Moins">−</button>
-        <strong class="stepper-v">${d.perWeek}</strong>
+        <strong class="stepper-v">${d.perWeek || d.perMonth}</strong>
         <button class="btn" data-act="d-per" data-dir="1" aria-label="Plus">+</button>
       </div></div>` : `<div class="field"><span>Jours</span><div class="dpick">
       ${DAY_LETTERS.map((l, i) => `<button class="dp${d.days.includes(i) ? ' on' : ''}" data-act="d-day" data-i="${i}" aria-pressed="${d.days.includes(i)}">${l}</button>`).join('')}
@@ -1553,8 +1584,18 @@ document.addEventListener('click', (e) => {
     case 'open-review': swap(() => { ui.tab = 'calendar'; ui.reviewWeek = 0; render(); $scroller.scrollTo(0, 0); }, 'left'); break;
     case 'review-week': ui.reviewWeek = Number(el.dataset.week); renderCalendar(); break;
     case 'd-type': sheetDraft.type = el.dataset.v; drawEditSheet(); break;
-    case 'd-freq': sheetDraft.perWeek = el.dataset.v === 'week' ? sheetDraft.perWeek || 3 : null; drawEditSheet(); break;
-    case 'd-per': sheetDraft.perWeek = Math.min(6, Math.max(1, (sheetDraft.perWeek || 3) + Number(el.dataset.dir))); drawEditSheet(); break;
+    case 'd-freq': {
+      const v = el.dataset.v;
+      sheetDraft.perWeek = v === 'week' ? sheetDraft.perWeek || 3 : null;
+      sheetDraft.perMonth = v === 'month' ? sheetDraft.perMonth || 1 : null;
+      drawEditSheet();
+      break;
+    }
+    case 'd-per':
+      if (sheetDraft.perMonth) sheetDraft.perMonth = Math.min(20, Math.max(1, sheetDraft.perMonth + Number(el.dataset.dir)));
+      else sheetDraft.perWeek = Math.min(6, Math.max(1, (sheetDraft.perWeek || 3) + Number(el.dataset.dir)));
+      drawEditSheet();
+      break;
     case 'pick-day': {
       const nd = parseKey(el.dataset.key);
       if (dkey(nd) === key) break;
@@ -1638,13 +1679,13 @@ document.addEventListener('click', (e) => {
       const kind = sheetDraft.type || CHECK;
       if (!name) { toast('Donnez un nom à votre habitude'); break; }
       if (kind === COUNT && !(sheetDraft.target > 0)) { toast('Indiquez un objectif chiffré'); break; }
-      if (kind !== QUIT && !sheetDraft.perWeek && !sheetDraft.days.length) { toast('Choisissez au moins un jour'); break; }
+      if (kind !== QUIT && !sheetDraft.perWeek && !sheetDraft.perMonth && !sheetDraft.days.length) { toast('Choisissez au moins un jour'); break; }
       readLink(sheetDraft);
       if (sheetDraft.goalId && kind === CHECK && !(sheetDraft.goalPer > 0)) { toast("Indiquez combien chaque fois ajoute à l'objectif"); break; }
       if (kind === QUIT || !sheetDraft.goalId) { delete sheetDraft.goalId; delete sheetDraft.goalPer; delete sheetDraft.goalSince; }
       else if (sheetDraft.goalId !== habitById(sheetDraft.id)?.goalId) sheetDraft.goalSince = sheetIsNew ? sheetDraft.createdAt : dkey(today());
-      if (kind === QUIT) sheetDraft.perWeek = null;
-      if (kind === QUIT || sheetDraft.perWeek) sheetDraft.days = [0, 1, 2, 3, 4, 5, 6];
+      if (kind === QUIT) { sheetDraft.perWeek = null; sheetDraft.perMonth = null; }
+      if (kind === QUIT || sheetDraft.perWeek || sheetDraft.perMonth) sheetDraft.days = [0, 1, 2, 3, 4, 5, 6];
       sheetDraft.name = name;
       if (since) sheetDraft.createdAt = since;
       sheetDraft.group = document.getElementById('h-group').value.trim();
@@ -1737,6 +1778,17 @@ document.addEventListener('click', (e) => {
           else hist.push({ d: k, v: clean.current });
         }
         clean.hist = hist;
+      } else {
+        // Étapes ou estimation : garder l'avancement de chaque jour où il change, pour la mini courbe.
+        const now = goalProgress(clean);
+        const phist = (old && old.phist) ? [...old.phist] : [{ d: (old || d).createdAt, p: old ? Number(old.startPct) || 0 : now }];
+        if (!old || now !== goalProgress(old)) {
+          const k = dkey(today());
+          const i = phist.findIndex((x) => x.d === k);
+          if (i >= 0) phist[i] = { d: k, p: now };
+          else phist.push({ d: k, p: now });
+        }
+        clean.phist = phist;
       }
       if (old) Object.assign(old, clean);
       else data.goals.push({ ...clean, startPct: goalProgress(clean) });

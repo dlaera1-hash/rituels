@@ -16,7 +16,7 @@ Idées reprises de Habo (fait, pas fait, sauté qui ne casse pas la série, note
 - À cocher : fait ou pas fait.
 - Chiffrée : objectif et unité (2 L, 20 pages). Chaque appui sur la tuile ajoute le pas choisi ; − pour corriger.
 - À arrêter (tabac, sucre) : chaque jour compte comme tenu, sauf écart noté. La tuile affiche « X j sans ».
-- Fréquence : jours fixes, ou « X fois par semaine ». La série se compte alors en semaines,
+- Fréquence : jours fixes, « X fois par semaine » ou « X fois par mois ». La série se compte alors en semaines,
   et l'habitude sort de l'anneau du jour une fois l'objectif de la semaine atteint.
 
 ## Suivi

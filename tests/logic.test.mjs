@@ -171,3 +171,38 @@ test('courbe : saisies à la main + apports, un point par jour utile', () => {
     { d: '2026-10-30', v: 3200 },
   ]);
 });
+
+import { isMonthly, monthDone, periodLeft, periodDone } from '../logic.js';
+
+test('mensuelle : série en mois, le mois en cours ne casse rien', () => {
+  const m = { id: 'm', type: 'check', perMonth: 1, days: [0,1,2,3,4,5,6], createdAt: '2026-07-01' };
+  assert.ok(isMonthly(m));
+  const log = { '2026-07-05': { m: { s: DONE } }, '2026-08-28': { m: { s: DONE } }, '2026-09-10': { m: { s: DONE } } };
+  assert.equal(currentStreak(m, log, T), 3); // octobre pas encore fait : juillet, août, septembre
+  assert.equal(currentStreak(m, { ...log, '2026-10-02': { m: { s: DONE } } }, T), 4);
+  assert.equal(currentStreak(m, { '2026-07-05': log['2026-07-05'], '2026-09-10': log['2026-09-10'] }, T), 1);
+  assert.equal(bestStreak(m, log, T), 3);
+  assert.equal(monthDone(m, log, T), 0);
+  assert.equal(periodDone({ ...m, perMonth: 2 }, { '2026-10-02': { m: { s: DONE } } }, T), 1);
+});
+test('mensuelle : hors de l\'anneau tant qu\'il reste du temps, en danger à la fin du mois', () => {
+  const m = { id: 'm', type: 'check', perMonth: 1, days: [0,1,2,3,4,5,6], createdAt: '2026-07-01' };
+  assert.equal(periodLeft(m, T), 2); // 30 et 31 octobre
+  assert.deepEqual(dayProgress([m], {}, new Date(2026, 9, 10)), { done: 0, total: 0 });
+  assert.deepEqual(dayProgress([m], {}, new Date(2026, 9, 31)), { done: 0, total: 1 });
+  assert.deepEqual(dayProgress([m], { '2026-10-10': { m: { s: DONE } } }, new Date(2026, 9, 10)), { done: 1, total: 1 });
+  assert.equal(atRisk([m], {}, new Date(2026, 9, 31)).length, 1);
+  assert.equal(atRisk([m], {}, new Date(2026, 9, 10)).length, 0);
+});
+
+import { goalProgressSeries } from '../logic.js';
+
+test('mini courbe : étapes ou estimation à partir des avancements enregistrés', () => {
+  const g = { id: 'g', kind: MANUAL, pct: 60, createdAt: '2026-09-01', startPct: 0.1,
+    phist: [{ d: '2026-09-01', p: 0.1 }, { d: '2026-10-01', p: 0.4 }] };
+  assert.deepEqual(goalProgressSeries(g, [], {}, T), [
+    { d: '2026-09-01', p: 0.1 }, { d: '2026-10-01', p: 0.4 }, { d: '2026-10-30', p: 0.6 },
+  ]);
+  const a = { id: 'a', kind: AMOUNT, current: 2000, target: 4000, createdAt: '2026-10-01', hist: [{ d: '2026-10-01', v: 1000 }, { d: '2026-10-15', v: 2000 }] };
+  assert.deepEqual(goalProgressSeries(a, [], {}, T).map((x) => x.p), [0.25, 0.5, 0.5]);
+});
