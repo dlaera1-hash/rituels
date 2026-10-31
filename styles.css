@@ -857,3 +857,7 @@ input[type="range"], [data-glass] input[type="range"] {
 .sp-dot { fill: var(--c); stroke: var(--surface); stroke-width: 2; }
 .goal-foot > span:first-child { min-width: 0; }
 .g-chain { font-size: 12px; margin-left: 2px; }
+
+/* Fiche verrouillée : défilement vertical seulement, sans rebond ni glissement de côté */
+.sheet { overflow-x: hidden; overscroll-behavior: none; touch-action: pan-y; }
+.sheet input[type="range"] { touch-action: pan-x; }

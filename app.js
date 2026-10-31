@@ -5,7 +5,7 @@ import {
   CHECK, COUNT, QUIT, kindOf, isWeekly, valueOf, statusFor, statusForValue, weekDone, atRisk, weekReview,
   isMonthly, periodOf, periodDone, periodTarget,
   AMOUNT, STEPS, MANUAL, goalProgress, goalPace, goalsOverall, goalLinked, goalSeries, goalProgressSeries,
-} from './logic.js?v=13'; // numéro à changer avec VERSION dans sw.js : évite un vieux fichier en cache
+} from './logic.js?v=14'; // numéro à changer avec VERSION dans sw.js : évite un vieux fichier en cache
 
 // ---------- Données ----------
 
@@ -1349,8 +1349,9 @@ async function importData(file) {
 
 function openSheet() {
   if (!$sheet.open) {
-    $sheet.scrollTop = 0;
     $sheet.showModal();
+    // Après l'ouverture : une fiche fermée ne peut pas être remise en haut, elle gardait l'ancienne position.
+    $sheet.scrollTop = 0;
     document.documentElement.classList.add('sheet-open');
   }
   // Sur iPhone, un champ qui reçoit le focus fait monter le clavier et pousse la fiche hors de l'écran.
@@ -1469,6 +1470,36 @@ function endDrag() {
 }
 $sheet.addEventListener('touchend', endDrag);
 $sheet.addEventListener('touchcancel', endDrag);
+
+// Fiche ouverte : rien ne bouge en dehors du défilement vertical de la fiche elle-même.
+// Bloque le rebond en haut et en bas, le glissement de côté, et la page qui suit le doigt
+// quand le clavier est ouvert sur iPhone.
+let lockStart = null;
+document.addEventListener('touchstart', (e) => {
+  lockStart = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+}, { passive: true });
+document.addEventListener('touchmove', (e) => {
+  if (!$sheet.open || (drag && drag.on)) return;
+  if (e.touches.length > 1 || !lockStart) { e.preventDefault(); return; }
+  const dx = e.touches[0].clientX - lockStart.x;
+  const dy = e.touches[0].clientY - lockStart.y;
+  if (Math.abs(dx) > Math.abs(dy)) {
+    if (!e.target.closest('input[type="range"]')) e.preventDefault();
+    return;
+  }
+  // Une zone de texte longue garde son propre défilement.
+  const ta = e.target.closest('textarea');
+  if (ta && ta.scrollHeight > ta.clientHeight + 1) {
+    const atTop = ta.scrollTop <= 0;
+    const atEnd = ta.scrollTop + ta.clientHeight >= ta.scrollHeight - 1;
+    if ((dy > 0 && !atTop) || (dy < 0 && !atEnd)) return;
+  }
+  const inSheet = $sheet.contains(e.target) && e.target !== $sheet;
+  const canScroll = $sheet.scrollHeight > $sheet.clientHeight + 1;
+  const atTop = $sheet.scrollTop <= 0;
+  const atEnd = $sheet.scrollTop + $sheet.clientHeight >= $sheet.scrollHeight - 1;
+  if (!inSheet || !canScroll || (dy > 0 && atTop) || (dy < 0 && atEnd)) e.preventDefault();
+}, { passive: false });
 
 // ---------- Navigation et actions ----------
 
