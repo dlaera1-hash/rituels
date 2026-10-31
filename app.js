@@ -554,7 +554,7 @@ function drawRun() {
       ${emo('☀️', 'huge')}
       <h2>${esc(run.g)} terminé</h2>
       <p class="muted">Belle façon de commencer la journée.</p>
-      <button class="btn primary full" data-act="run-close">Fermer</button>
+      <button class="btn primary full" data-act="run-close" autofocus>Fermer</button>
     </div>`;
     return;
   }
@@ -565,7 +565,7 @@ function drawRun() {
   }).join('');
   $sheetBody.innerHTML = `<div class="run" style="--c:${h.color}">
     <div class="run-top"><span class="muted small">${esc(run.g)} · étape ${run.idx + 1}/${steps.length}</span>
-      <button class="x" data-act="run-close" aria-label="Fermer">✕</button></div>
+      <button class="x" data-act="run-close" aria-label="Fermer" autofocus>✕</button></div>
     <div class="dots">${dots}</div>
     <div class="run-ring">
       <svg width="200" height="200" viewBox="0 0 200 200" aria-hidden="true">
@@ -659,7 +659,8 @@ function openDaySheet(h) {
   }
   $sheetBody.innerHTML = `
     <div class="sheet-head" style="--c:${h.color}">${emo(h.icon, 'big')}<div><h2>${esc(h.name)}</h2>
-      <p class="muted">${fmtDate(ui.date, { weekday: 'long', day: 'numeric', month: 'long' })}</p></div></div>
+      <p class="muted">${fmtDate(ui.date, { weekday: 'long', day: 'numeric', month: 'long' })}</p></div>
+      <button class="x head-x" data-act="close-sheet" aria-label="Fermer" autofocus>✕</button></div>
     ${body}
     <label class="field"><span>Note du jour</span>
       <textarea id="note" rows="3" placeholder="Comment ça s'est passé ?">${esc(note)}</textarea></label>
@@ -869,7 +870,11 @@ function drawEditSheet() {
       ${DAY_LETTERS.map((l, i) => `<button class="dp${d.days.includes(i) ? ' on' : ''}" data-act="d-day" data-i="${i}" aria-pressed="${d.days.includes(i)}">${l}</button>`).join('')}
     </div></div>`}`;
   $sheetBody.innerHTML = `
-    <h2>${sheetIsNew ? 'Nouvelle habitude' : "Modifier l'habitude"}</h2>
+    <div class="sheet-top">
+      <button class="top-btn" data-act="close-sheet" autofocus>Annuler</button>
+      <h2>${sheetIsNew ? 'Nouvelle habitude' : "Modifier l'habitude"}</h2>
+      <button class="top-btn strong" data-act="d-save">${sheetIsNew ? 'Ajouter' : 'OK'}</button>
+    </div>
     <label class="field"><span>Nom</span>
       <input id="h-name" value="${esc(d.name)}" placeholder="Lire 20 pages" maxlength="40" autocomplete="off"></label>
     <div class="field"><span>Type</span><div class="segs three-s">${typeSeg(CHECK, 'À cocher')}${typeSeg(COUNT, 'Chiffrée')}${typeSeg(QUIT, 'À arrêter')}</div></div>
@@ -879,7 +884,7 @@ function drawEditSheet() {
       ${COLORS.map((c) => `<button class="cp${d.color === c ? ' on' : ''}" style="--c:${c}" data-act="d-color" data-c="${c}" aria-label="Couleur"></button>`).join('')}
     </div></div>
     <div class="field"><span>Émoji</span><div class="ipick" style="--c:${d.color}">
-      ${EMOJIS.map((k) => `<button class="ip${d.icon === k ? ' on' : ''}" data-act="d-icon" data-k="${k}">${emo(k)}</button>`).join('')}
+      ${EMOJIS.map((k) => `<button type="button" class="ip${d.icon === k ? ' on' : ''}" data-act="d-icon" data-k="${k}" aria-pressed="${d.icon === k}" aria-label="Émoji ${k}">${emo(k)}</button>`).join('')}
     </div>
       <input id="h-emoji" class="emoji-in" value="${EMOJIS.includes(d.icon) ? '' : esc(d.icon)}" placeholder="Ou tapez le vôtre" maxlength="16" autocomplete="off">
     </div>
@@ -1019,8 +1024,37 @@ async function importData(file) {
 // ---------- Feuille du bas ----------
 
 function openSheet() {
-  if (!$sheet.open) $sheet.showModal();
+  if (!$sheet.open) {
+    $sheet.scrollTop = 0;
+    $sheet.showModal();
+    document.documentElement.classList.add('sheet-open');
+  }
+  // Sur iPhone, un champ qui reçoit le focus fait monter le clavier et pousse la fiche hors de l'écran.
+  const a = document.activeElement;
+  if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) a.blur();
+  fitSheet();
 }
+
+// Garde la fiche dans la partie visible de l'écran, au-dessus du clavier.
+function fitSheet() {
+  const vv = window.visualViewport;
+  if (!vv || !$sheet.open) return;
+  const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+  $sheet.style.setProperty('--vvh', `${vv.height}px`);
+  $sheet.style.setProperty('--kb', `${kb}px`);
+  $sheet.classList.toggle('kb', kb > 80);
+}
+
+if (window.visualViewport) {
+  visualViewport.addEventListener('resize', fitSheet);
+  visualViewport.addEventListener('scroll', fitSheet);
+}
+
+// Le champ touché reste visible quand le clavier monte.
+$sheet.addEventListener('focusin', (e) => {
+  if (!/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
+  setTimeout(() => { fitSheet(); e.target.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 300);
+});
 
 function closeSheet() {
   if (!$sheet.open || $sheet.classList.contains('closing')) return;
@@ -1029,12 +1063,24 @@ function closeSheet() {
   setTimeout(() => { $sheet.classList.remove('closing'); $sheet.close(); }, 180);
 }
 
+// Toucher le fond sombre ferme la fiche (et non une marge à l'intérieur de la fiche).
 $sheet.addEventListener('click', (e) => {
-  if (e.target === $sheet) closeSheet();
+  if (e.target !== $sheet) return;
+  const r = $sheet.getBoundingClientRect();
+  const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+  if (!inside) closeSheet();
+});
+
+// Échap ou geste retour : même fermeture animée.
+$sheet.addEventListener('cancel', (e) => {
+  e.preventDefault();
+  closeSheet();
 });
 
 $sheet.addEventListener('close', () => {
   if (run) stopRun();
+  document.documentElement.classList.remove('sheet-open');
+  $sheet.classList.remove('kb');
 });
 
 // ---------- Navigation et actions ----------
@@ -1176,17 +1222,28 @@ document.addEventListener('click', (e) => {
       const i = Number(el.dataset.i);
       const days = sheetDraft.days;
       sheetDraft.days = days.includes(i) ? days.filter((x) => x !== i) : [...days, i].sort();
-      drawEditSheet();
+      el.classList.toggle('on', sheetDraft.days.includes(i));
+      el.setAttribute('aria-pressed', sheetDraft.days.includes(i));
       break;
     }
-    case 'd-color': sheetDraft.color = el.dataset.c; drawEditSheet(); break;
+    case 'd-color': {
+      sheetDraft.color = el.dataset.c;
+      $sheetBody.querySelectorAll('.cp').forEach((b) => b.classList.toggle('on', b === el));
+      $sheetBody.querySelector('.ipick')?.style.setProperty('--c', sheetDraft.color);
+      break;
+    }
     case 'd-icon': {
       const inp = document.getElementById('h-emoji');
       if (inp) inp.value = '';
       sheetDraft.icon = el.dataset.k;
-      drawEditSheet();
+      $sheetBody.querySelectorAll('.ip').forEach((b) => {
+        b.classList.toggle('on', b === el);
+        b.setAttribute('aria-pressed', b === el);
+      });
+      if (navigator.vibrate) navigator.vibrate(8);
       break;
     }
+    case 'close-sheet': closeSheet(); break;
     case 'd-save': {
       const name = document.getElementById('h-name').value.trim();
       const since = document.getElementById('h-since').value;
@@ -1248,6 +1305,10 @@ document.addEventListener('click', (e) => {
 
 // Le journal de l'étape s'enregistre pendant la frappe.
 document.addEventListener('input', (e) => {
+  // Un émoji tapé à la main remplace celui de la grille.
+  if (e.target.id === 'h-emoji' && e.target.value.trim()) {
+    $sheetBody.querySelectorAll('.ip.on').forEach((b) => { b.classList.remove('on'); b.setAttribute('aria-pressed', false); });
+  }
   if (e.target.id !== 'run-note' || !run) return;
   setNote(runSteps()[run.idx], dkey(today()), e.target.value);
 });
