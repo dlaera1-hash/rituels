@@ -106,3 +106,38 @@ test('bilan de la semaine', () => {
   assert.equal(r.moodLink.h.id, 'b');
   assert.ok(r.rate > 50 && r.rate < 100);
 });
+
+import { AMOUNT, STEPS, MANUAL, goalProgress, goalPace, goalsOverall } from '../logic.js';
+
+test('objectif montant : actuel sur cible, plafonné à 100 %', () => {
+  assert.equal(goalProgress({ kind: AMOUNT, current: 12000, target: 40000 }), 0.3);
+  assert.equal(goalProgress({ kind: AMOUNT, current: 50000, target: 40000 }), 1);
+  assert.equal(goalProgress({ kind: AMOUNT, current: 100, target: 0 }), 0);
+});
+test('objectif par étapes et à l\'estime', () => {
+  assert.equal(goalProgress({ kind: STEPS, steps: [{ done: true }, { done: false }, { done: true }, { done: false }] }), 0.5);
+  assert.equal(goalProgress({ kind: STEPS, steps: [] }), 0);
+  assert.equal(goalProgress({ kind: MANUAL, pct: 35 }), 0.35);
+});
+test('rythme : en avance, dans les temps, en retard, échéance passée, atteint', () => {
+  // Créé le 1er janvier, échéance le 31 décembre : fin octobre, environ 83 % de l'année est écoulé.
+  const g = (current) => ({ kind: AMOUNT, current, target: 100, createdAt: '2026-01-01', due: '2026-12-31' });
+  assert.equal(goalPace(g(95), T).state, 'ahead');
+  assert.equal(goalPace(g(80), T).state, 'ontrack');
+  assert.equal(goalPace(g(40), T).state, 'behind');
+  assert.equal(goalPace(g(100), T).state, 'done');
+  assert.equal(goalPace({ ...g(40), due: '2026-10-01' }, T).state, 'late');
+});
+test('avancement moyen', () => {
+  assert.equal(goalsOverall([]), null);
+  assert.equal(goalsOverall([{ kind: MANUAL, pct: 20 }, { kind: MANUAL, pct: 60 }]), 0.4);
+});
+test('rythme : part de l\'avancement au jour de la création', () => {
+  const g = { kind: AMOUNT, current: 12000, target: 40000, createdAt: dkey(T), due: '2026-12-31' };
+  assert.equal(goalPace(g, T).state, 'ahead'); // sans point de départ, 30 % dès le premier jour paraît en avance
+  assert.equal(goalPace({ ...g, startPct: 0.3 }, T).state, 'ontrack');
+  // Un an plus tard, à mi-parcours du temps, il faut être vers 65 % (30 % + la moitié du reste)
+  const y = { ...g, startPct: 0.3, createdAt: '2026-01-01', due: '2027-12-31' };
+  assert.equal(goalPace({ ...y, current: 12000 }, new Date(2027, 0, 1)).state, 'behind');
+  assert.equal(goalPace({ ...y, current: 26000 }, new Date(2027, 0, 1)).state, 'ontrack');
+});

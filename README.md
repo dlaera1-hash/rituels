@@ -3,10 +3,12 @@
 Suivi d'habitudes pour téléphone. Appli web installable, hors ligne, sans compte, sans serveur.
 Idées reprises de Habo (fait, pas fait, sauté qui ne casse pas la série, notes, archives), sans son code.
 
-## Les trois écrans
+## Les quatre écrans
 
 - Aujourd'hui : anneau du jour, semaine en haut, une tuile par habitude. Toucher = fait. ••• = pas fait, sauté, note.
 - Calendrier : 15 semaines par habitude, série, record, taux sur 30 jours. Toucher un jour l'ouvre pour le modifier.
+- Objectifs : ce que vous voulez accomplir cette année ou l'an prochain (financier, patrimoine, immobilier…),
+  mesuré par un montant, des étapes ou une estimation. Pourcentage atteint et rythme : en avance, dans les temps, en retard.
 - Habitudes : ajouter, modifier (jours, couleur, émoji), réordonner, archiver, supprimer, exporter et importer, choisir le thème.
 
 ## Types d'habitudes

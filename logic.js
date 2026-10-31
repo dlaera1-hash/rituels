@@ -368,3 +368,44 @@ export function weekReview(habits, log, moods, ws, today) {
     moodLink,
   };
 }
+
+// ---------- Objectifs de vie ----------
+
+// Façons de mesurer un objectif
+export const AMOUNT = 'amount'; // montant ou quantité : actuel / cible (12 000 € sur 40 000 €)
+export const STEPS = 'steps'; // étapes à cocher
+export const MANUAL = 'manual'; // estimation à la main, en pourcentage
+
+const clamp01 = (x) => Math.min(1, Math.max(0, x));
+
+// Avancement entre 0 et 1.
+export function goalProgress(g) {
+  if (g.kind === STEPS) {
+    const n = (g.steps || []).length;
+    return n ? g.steps.filter((s) => s.done).length / n : 0;
+  }
+  if (g.kind === MANUAL) return clamp01((Number(g.pct) || 0) / 100);
+  return g.target > 0 ? clamp01((Number(g.current) || 0) / g.target) : 0;
+}
+
+// Où en est-on par rapport au temps écoulé entre la création et l'échéance ?
+// Le rythme attendu part de l'avancement au jour de la création (startPct, entre 0 et 1) :
+// un apport déjà à 30 % le jour où on le note est « dans les temps », pas « en avance ».
+// state : done (atteint), late (échéance passée), ahead (en avance), ontrack (dans les temps), behind (en retard).
+export function goalPace(g, today) {
+  const p = goalProgress(g);
+  if (p >= 1) return { state: 'done', expected: 1 };
+  if (dkey(today) > g.due) return { state: 'late', expected: 1 };
+  const start = parseKey(g.createdAt);
+  const span = parseKey(g.due) - start;
+  const p0 = clamp01(Number(g.startPct) || 0);
+  const expected = span > 0 ? p0 + (1 - p0) * clamp01((today - start) / span) : 1;
+  const diff = p - expected;
+  return { state: diff >= 0.05 ? 'ahead' : diff >= -0.1 ? 'ontrack' : 'behind', expected };
+}
+
+// Avancement moyen des objectifs en cours (0 à 1), null s'il n'y en a aucun.
+export function goalsOverall(goals) {
+  if (!goals.length) return null;
+  return goals.reduce((s, g) => s + goalProgress(g), 0) / goals.length;
+}

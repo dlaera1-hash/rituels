@@ -3,7 +3,8 @@ import {
   isScheduled, statusOf, currentStreak, bestStreak, successRate, dayProgress,
   groupStatus, groupStreak, PARTIAL,
   CHECK, COUNT, QUIT, kindOf, isWeekly, valueOf, statusFor, statusForValue, weekDone, atRisk, weekReview,
-} from './logic.js';
+  AMOUNT, STEPS, MANUAL, goalProgress, goalPace, goalsOverall,
+} from './logic.js?v=11'; // numéro à changer avec VERSION dans sw.js : évite un vieux fichier en cache
 
 // ---------- Données ----------
 
@@ -48,7 +49,7 @@ function uid() {
 }
 
 function emptyData() {
-  return { version: 1, habits: [], log: {}, moods: {} };
+  return { version: 1, habits: [], log: {}, moods: {}, goals: [] };
 }
 
 function load() {
@@ -61,6 +62,7 @@ function load() {
       if (OLD_ICON_EMOJI[h.icon]) h.icon = OLD_ICON_EMOJI[h.icon];
     }
     data.moods ||= {};
+    data.goals ||= [];
     return data;
   } catch {
     return emptyData();
@@ -412,7 +414,7 @@ function moodRow(key) {
 }
 
 // Petite fête quand la journée devient complète.
-function celebrate() {
+function celebrate(msg = 'Journée complète, bravo') {
   if (navigator.vibrate) navigator.vibrate([20, 40, 20, 40, 60]);
   const box = document.createElement('div');
   box.className = 'confetti';
@@ -428,7 +430,7 @@ function celebrate() {
   }
   document.body.appendChild(box);
   setTimeout(() => box.remove(), 2200);
-  toast('Journée complète, bravo');
+  toast(msg);
 }
 
 // Lance la fête si l'action a fait passer la journée à complète.
@@ -732,8 +734,8 @@ function reviewCard() {
     <div class="review-head">
       <div><h2>Bilan · ${label}</h2><p class="muted small">${range}</p></div>
       <div class="segs two-s mini">
-        <button class="seg${ui.reviewWeek === -1 ? ' on' : ''}" data-act="review-week" data-w="-1">Précédente</button>
-        <button class="seg${ui.reviewWeek === 0 ? ' on' : ''}" data-act="review-week" data-w="0">En cours</button>
+        <button class="seg${ui.reviewWeek === -1 ? ' on' : ''}" data-act="review-week" data-week="-1">Précédente</button>
+        <button class="seg${ui.reviewWeek === 0 ? ' on' : ''}" data-act="review-week" data-week="0">En cours</button>
       </div>
     </div>
     <div class="review-main">
@@ -821,6 +823,189 @@ function renderHabits() {
       <label class="btn">Importer<input type="file" accept="application/json,.json" id="import" hidden></label>
     </div>
   `;
+}
+
+
+// ---------- Écran 3 : Objectifs de vie ----------
+
+// [id, libellé, émoji, couleur]
+const GOAL_CATS = [
+  ['financier', 'Financier', '💶', '#1D9E75'],
+  ['patrimoine', 'Patrimoine', '🏛️', '#7F77DD'],
+  ['immobilier', 'Immobilier', '🏡', '#BA7517'],
+  ['pro', 'Pro', '💼', '#378ADD'],
+  ['sante', 'Santé', '💪', '#D85A30'],
+  ['perso', 'Perso', '✨', '#D4537E'],
+];
+const PACE = {
+  done: 'Atteint', late: 'Échéance passée', ahead: 'En avance', ontrack: 'Dans les temps', behind: 'En retard',
+};
+
+function goalCat(g) {
+  return GOAL_CATS.find((c) => c[0] === g.cat) || GOAL_CATS[5];
+}
+
+function pctLabel(p) {
+  return `${Math.round(p * 100)}\u00a0%`; // espace insécable : le % ne passe jamais seul à la ligne
+}
+
+function dueLabel(due) {
+  if (due.endsWith('-12-31')) return `fin ${due.slice(0, 4)}`;
+  return fmtDate(parseKey(due), { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function goalDetail(g) {
+  if (g.kind === STEPS) {
+    const n = (g.steps || []).length;
+    const k = (g.steps || []).filter((x) => x.done).length;
+    return `${k} étape${k > 1 ? 's' : ''} sur ${n}`;
+  }
+  if (g.kind === MANUAL) return 'Estimation';
+  const u = g.unit ? ` ${esc(g.unit)}` : '';
+  return `${fmtNum(g.current)}${u} sur ${fmtNum(g.target)}${u}`;
+}
+
+function goalCard(g, t) {
+  const [, label, e, color] = goalCat(g);
+  const p = goalProgress(g);
+  const pace = goalPace(g, t);
+  return `<button class="goal${p >= 1 ? ' reached' : ''}" data-act="goal" data-gid="${g.id}" style="--c:${color}">
+    <span class="goal-top">
+      <span class="row-ic">${emo(g.icon || e)}</span>
+      <span class="goal-txt"><strong>${esc(g.name)}</strong><span>${label} · ${dueLabel(g.due)}</span></span>
+      <span class="goal-pct">${pctLabel(p)}</span>
+    </span>
+    ${barHtml('goal-' + g.id, p)}
+    <span class="goal-foot"><span>${goalDetail(g)}</span><span class="pace pace-${pace.state}">${PACE[pace.state]}</span></span>
+  </button>`;
+}
+
+function renderGoals() {
+  const t = today();
+  const y = t.getFullYear();
+  const goals = [...data.goals].sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : 0));
+  const overall = goalsOverall(goals);
+  const reached = goals.filter((g) => goalProgress(g) >= 1).length;
+  const count = (st) => goals.filter((g) => goalPace(g, t).state === st).length;
+  const summary = [[count('ahead'), 'en avance'], [count('ontrack'), 'dans les temps'], [count('behind') + count('late'), 'en retard']]
+    .filter(([n]) => n).map(([n, l]) => `${n} ${l}`).join(' · ');
+  const sections = [
+    [`Cette année · ${y}`, (g) => g.due.slice(0, 4) <= String(y)],
+    [`L'an prochain · ${y + 1}`, (g) => g.due.slice(0, 4) === String(y + 1)],
+    ['Plus tard', (g) => g.due.slice(0, 4) > String(y + 1)],
+  ].map(([title, keep]) => {
+    const list = goals.filter(keep);
+    return list.length ? `<h3 class="sec">${title}</h3><section class="goal-list">${list.map((g) => goalCard(g, t)).join('')}</section>` : '';
+  }).join('');
+
+  $view.innerHTML = `
+    <header class="head"><p class="eyebrow">${goals.length ? `${reached} atteint${reached > 1 ? 's' : ''} sur ${goals.length}` : 'Ce que vous voulez accomplir'}</p><h1>Objectifs</h1></header>
+    ${goals.length ? `<article class="card goal-hero">
+      <div class="r-ring big">${ring(Math.round(overall * 100), 100, 72, 8, undefined, 'goals-all')}<span>${pctLabel(overall)}</span></div>
+      <div><h2>Avancement moyen</h2><p class="muted small">${summary || 'Pas encore commencé'}</p></div>
+    </article>` : `<p class="muted goal-empty">Les choses que vous voulez faire cette année ou l'an prochain : constituer un apport, acheter un bien, ouvrir un PEA, courir un semi-marathon… Chaque objectif affiche où vous en êtes, en pourcentage, et si vous êtes dans les temps.</p>`}
+    ${sections}
+    <button class="btn dashed full" data-act="new-goal">+ Nouvel objectif</button>
+    ${goals.length ? '<p class="hint">Touchez un objectif pour mettre à jour où vous en êtes.</p>' : ''}
+  `;
+}
+
+let goalDraft = null;
+let goalIsNew = false;
+
+function openGoalSheet(g) {
+  goalIsNew = !g;
+  const y = today().getFullYear();
+  goalDraft = g ? JSON.parse(JSON.stringify(g)) : {
+    id: uid(), name: '', cat: 'financier', kind: AMOUNT, due: `${y}-12-31`, dueMode: 'y0',
+    current: 0, target: null, unit: '€', steps: [], pct: 0, why: '', createdAt: dkey(today()),
+  };
+  if (g) goalDraft.dueMode = g.due === `${y}-12-31` ? 'y0' : g.due === `${y + 1}-12-31` ? 'y1' : 'date';
+  $sheetBody.innerHTML = '';
+  drawGoalSheet();
+  openSheet();
+}
+
+// Garde ce qui a été tapé quand la fiche se redessine.
+function readGoal(d) {
+  const v = (id) => document.getElementById(id);
+  if (v('g-name')) d.name = v('g-name').value;
+  if (v('g-why')) d.why = v('g-why').value;
+  if (v('g-date') && d.dueMode === 'date') d.due = v('g-date').value || d.due;
+  if (v('g-current')) d.current = Number(v('g-current').value) || 0;
+  if (v('g-target')) d.target = Number(v('g-target').value) || null;
+  if (v('g-unit')) d.unit = v('g-unit').value.trim();
+  if (v('g-pct')) d.pct = Number(v('g-pct').value) || 0;
+  if (v('g-steps')) {
+    const before = d.steps || [];
+    d.steps = v('g-steps').value.split('\n').map((x) => x.trim()).filter(Boolean)
+      .map((t) => ({ t, done: !!before.find((s) => s.t === t)?.done }));
+  }
+}
+
+function goalNowBlock(d) {
+  const p = goalProgress(d);
+  const pace = goalPace({ ...d, createdAt: d.createdAt || dkey(today()) }, today());
+  const expected = pace.state === 'done' ? '' : ` · attendu à ce jour : ${pctLabel(pace.expected)}`;
+  return `<div class="goal-now" style="--c:${goalCat(d)[3]}">
+    <div class="r-ring big">${ring(Math.round(p * 100), 100, 72, 8, 'var(--c)')}<span id="g-now-pct">${pctLabel(p)}</span></div>
+    <div><span class="pace pace-${pace.state}">${PACE[pace.state]}</span><p class="muted small">${goalDetail(d)}${expected}</p></div>
+  </div>`;
+}
+
+function drawGoalSheet() {
+  const d = goalDraft;
+  readGoal(d);
+  const y = today().getFullYear();
+  const seg = (act, v, cur, label) => `<button class="seg${cur === v ? ' on' : ''}" data-act="${act}" data-v="${v}">${label}</button>`;
+  const amountNow = `<label class="field"><span>Où j'en suis aujourd'hui${d.unit ? ` (${esc(d.unit)})` : ''}</span>
+      <input id="g-current" type="number" inputmode="decimal" step="any" min="0" value="${d.current || ''}" placeholder="0"></label>`;
+  const manualNow = `<label class="field"><span>Où j'en suis, à l'estime : <strong id="g-pct-v">${d.pct || 0} %</strong></span>
+      <input id="g-pct" type="range" min="0" max="100" step="5" value="${d.pct || 0}"></label>`;
+  const stepsNow = (d.steps || []).length ? `<div class="g-steps">${d.steps.map((st, i) => `<button type="button" class="g-step${st.done ? ' on' : ''}" data-act="g-step" data-i="${i}" aria-pressed="${st.done}">
+      <span class="chk"></span><span>${esc(st.t)}</span></button>`).join('')}</div>` : '';
+  const now = goalIsNew ? '' : `${goalNowBlock(d)}
+    ${d.kind === AMOUNT ? amountNow : d.kind === MANUAL ? manualNow : stepsNow}`;
+  const measure = d.kind === AMOUNT ? `<div class="two-f">
+      <label class="field"><span>Cible</span><input id="g-target" type="number" inputmode="decimal" step="any" min="0" value="${d.target || ''}" placeholder="40000"></label>
+      <label class="field"><span>Unité</span><input id="g-unit" value="${esc(d.unit || '')}" placeholder="€" maxlength="10" autocomplete="off"></label>
+    </div>${goalIsNew ? amountNow : ''}`
+    : d.kind === STEPS ? `<label class="field"><span>Étapes (une par ligne)</span>
+      <textarea id="g-steps" rows="4" placeholder="Simuler mon prêt&#10;Rencontrer deux banques&#10;Signer le compromis">${esc((d.steps || []).map((x) => x.t).join('\n'))}</textarea></label>`
+    : (goalIsNew ? manualNow : '<p class="muted small">Vous estimez vous-même le pourcentage, en haut de la fiche.</p>');
+
+  $sheetBody.innerHTML = `
+    <div class="sheet-top">
+      <button class="top-btn" data-act="close-sheet" autofocus>Annuler</button>
+      <h2>${goalIsNew ? 'Nouvel objectif' : 'Objectif'}</h2>
+      <button class="top-btn strong" data-act="g-save">${goalIsNew ? 'Ajouter' : 'OK'}</button>
+    </div>
+    ${now}
+    <label class="field"><span>Objectif</span>
+      <input id="g-name" value="${esc(d.name)}" placeholder="Constituer mon apport" maxlength="60" autocomplete="off"></label>
+    <div class="field"><span>Domaine</span><div class="gcats">
+      ${GOAL_CATS.map(([id, label, e, c]) => `<button type="button" class="gcat${d.cat === id ? ' on' : ''}" style="--c:${c}" data-act="g-cat" data-v="${id}" aria-pressed="${d.cat === id}">${emo(e)}<span>${label}</span></button>`).join('')}
+    </div></div>
+    <div class="field"><span>Échéance</span><div class="segs three-s">
+      ${seg('g-due', 'y0', d.dueMode, `Fin ${y}`)}${seg('g-due', 'y1', d.dueMode, `Fin ${y + 1}`)}${seg('g-due', 'date', d.dueMode, 'Une date')}
+    </div>
+    ${d.dueMode === 'date' ? `<input id="g-date" type="date" value="${d.due}" min="${dkey(today())}">` : ''}</div>
+    <div class="field"><span>Comment le mesurer</span><div class="segs three-s">
+      ${seg('g-kind', AMOUNT, d.kind, 'Montant')}${seg('g-kind', STEPS, d.kind, 'Étapes')}${seg('g-kind', MANUAL, d.kind, 'Estimation')}
+    </div></div>
+    ${measure}
+    <label class="field"><span>Pourquoi c'est important (facultatif)</span>
+      <textarea id="g-why" rows="2" placeholder="Acheter une maison avec jardin">${esc(d.why || '')}</textarea></label>
+    <button class="btn primary full" data-act="g-save">${goalIsNew ? 'Ajouter' : 'Enregistrer'}</button>
+    ${goalIsNew ? '' : '<button class="btn danger full" data-act="g-delete">Supprimer cet objectif</button>'}`;
+}
+
+// Met à jour le pourcentage en haut de la fiche sans la redessiner.
+function refreshGoalNow() {
+  if (goalIsNew || !goalDraft) return;
+  readGoal(goalDraft);
+  const box = $sheetBody.querySelector('.goal-now');
+  if (box) box.outerHTML = goalNowBlock(goalDraft);
 }
 
 function openEditSheet(h) {
@@ -1014,6 +1199,8 @@ async function importData(file) {
     if (!Array.isArray(parsed.habits) || typeof parsed.log !== 'object') throw new Error('format');
     if (!confirm('Remplacer toutes vos données par celles du fichier ?')) return;
     data = parsed;
+    data.moods ||= {};
+    data.goals ||= [];
     save();
     toast('Données importées');
     render();
@@ -1086,10 +1273,40 @@ $sheet.addEventListener('close', () => {
 
 // ---------- Navigation et actions ----------
 
+// Pastille de verre sous l'onglet actif : elle glisse et s'étire d'un onglet à l'autre.
+const $pill = document.querySelector('.tab-pill');
+let pillAt = null;
+function movePill(name, animate = true) {
+  const tab = document.querySelector(`.tab[data-tab="${name}"]`);
+  if (!$pill || !tab) return;
+  const bar = $pill.parentElement.getBoundingClientRect();
+  const r = tab.getBoundingClientRect();
+  const to = { x: r.left - bar.left + 4, y: r.top - bar.top + 2 };
+  $pill.style.width = `${r.width - 8}px`;
+  $pill.style.height = `${r.height - 4}px`;
+  $pill.style.setProperty('--px', `${to.x}px`);
+  $pill.style.setProperty('--py', `${to.y}px`);
+  const from = pillAt;
+  pillAt = { name, x: to.x };
+  if (!animate || !from || from.name === name || reducedMotion.matches || !$pill.animate) return;
+  const d = to.x - from.x;
+  const at = (x, sx, sy) => ({ transform: `translate(${x}px, ${to.y}px) scale(${sx}, ${sy})` });
+  $pill.getAnimations().forEach((a) => a.cancel());
+  $pill.animate([
+    at(from.x, 1, 1),
+    { ...at(from.x + d * 0.55, 1.22, 0.86), offset: 0.4 },
+    { ...at(to.x + Math.sign(d) * 5, 0.96, 1.05), offset: 0.72 },
+    at(to.x, 1, 1),
+  ], { duration: 520, easing: 'cubic-bezier(0.25, 1, 0.5, 1)' });
+}
+addEventListener('resize', () => pillAt && movePill(pillAt.name, false));
+
 function render() {
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === ui.tab));
+  movePill(ui.tab);
   if (ui.tab === 'today') renderToday();
   else if (ui.tab === 'calendar') renderCalendar();
+  else if (ui.tab === 'goals') renderGoals();
   else renderHabits();
 }
 
@@ -1103,9 +1320,10 @@ function habitById(id) {
 document.addEventListener('click', (e) => {
   const tab = e.target.closest('.tab');
   if (tab) {
-    const order = ['today', 'calendar', 'habits'];
+    const order = ['today', 'calendar', 'goals', 'habits'];
     const dir = order.indexOf(tab.dataset.tab) >= order.indexOf(ui.tab) ? 'left' : 'right';
     if (tab.dataset.tab === ui.tab && ui.tab !== 'today') { $scroller.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+    movePill(tab.dataset.tab);
     swap(() => {
       ui.tab = tab.dataset.tab;
       if (ui.tab === 'today') ui.date = today();
@@ -1165,7 +1383,7 @@ document.addEventListener('click', (e) => {
       break;
     }
     case 'open-review': swap(() => { ui.tab = 'calendar'; ui.reviewWeek = 0; render(); $scroller.scrollTo(0, 0); }, 'left'); break;
-    case 'review-week': ui.reviewWeek = Number(el.dataset.w); renderCalendar(); break;
+    case 'review-week': ui.reviewWeek = Number(el.dataset.week); renderCalendar(); break;
     case 'd-type': sheetDraft.type = el.dataset.v; drawEditSheet(); break;
     case 'd-freq': sheetDraft.perWeek = el.dataset.v === 'week' ? sheetDraft.perWeek || 3 : null; drawEditSheet(); break;
     case 'd-per': sheetDraft.perWeek = Math.min(6, Math.max(1, (sheetDraft.perWeek || 3) + Number(el.dataset.dir))); drawEditSheet(); break;
@@ -1298,6 +1516,60 @@ document.addEventListener('click', (e) => {
       render();
       break;
     }
+    case 'new-goal': openGoalSheet(null); break;
+    case 'goal': openGoalSheet(data.goals.find((g) => g.id === el.dataset.gid)); break;
+    case 'g-cat':
+      goalDraft.cat = el.dataset.v;
+      $sheetBody.querySelectorAll('.gcat').forEach((b) => { b.classList.toggle('on', b === el); b.setAttribute('aria-pressed', b === el); });
+      refreshGoalNow();
+      break;
+    case 'g-due': {
+      const y = today().getFullYear();
+      readGoal(goalDraft);
+      goalDraft.dueMode = el.dataset.v;
+      if (el.dataset.v === 'y0') goalDraft.due = `${y}-12-31`;
+      else if (el.dataset.v === 'y1') goalDraft.due = `${y + 1}-12-31`;
+      drawGoalSheet();
+      break;
+    }
+    case 'g-kind': goalDraft.kind = el.dataset.v; drawGoalSheet(); break;
+    case 'g-step': {
+      const st = goalDraft.steps[Number(el.dataset.i)];
+      st.done = !st.done;
+      el.classList.toggle('on', st.done);
+      el.setAttribute('aria-pressed', st.done);
+      if (navigator.vibrate) navigator.vibrate(8);
+      refreshGoalNow();
+      break;
+    }
+    case 'g-save': {
+      const d = goalDraft;
+      readGoal(d);
+      d.name = d.name.trim();
+      d.why = (d.why || '').trim();
+      if (!d.name) { toast('Donnez un nom à votre objectif'); break; }
+      if (d.kind === AMOUNT && !(d.target > 0)) { toast('Indiquez une cible chiffrée'); break; }
+      if (d.kind === STEPS && !d.steps.length) { toast('Ajoutez au moins une étape'); break; }
+      if (!d.due) { toast('Choisissez une échéance'); break; }
+      const old = data.goals.find((g) => g.id === d.id);
+      const was = old ? goalProgress(old) : 0;
+      const { dueMode, ...clean } = d;
+      if (old) Object.assign(old, clean);
+      else data.goals.push({ ...clean, startPct: goalProgress(clean) });
+      save();
+      closeSheet();
+      render();
+      if (goalProgress(clean) >= 1 && was < 1) celebrate('Objectif atteint, bravo');
+      break;
+    }
+    case 'g-delete': {
+      if (!confirm('Supprimer cet objectif ?')) break;
+      data.goals = data.goals.filter((g) => g.id !== goalDraft.id);
+      save();
+      closeSheet();
+      render();
+      break;
+    }
     case 'export': exportData(); break;
     case 'theme': applyTheme(el.dataset.t); renderHabits(); break;
     default: break;
@@ -1310,6 +1582,11 @@ document.addEventListener('input', (e) => {
   if (e.target.id === 'h-emoji' && e.target.value.trim()) {
     $sheetBody.querySelectorAll('.ip.on').forEach((b) => { b.classList.remove('on'); b.setAttribute('aria-pressed', false); });
   }
+  if (e.target.id === 'g-pct') {
+    const out = document.getElementById('g-pct-v');
+    if (out) out.textContent = `${e.target.value} %`;
+  }
+  if (['g-current', 'g-pct', 'g-target'].includes(e.target.id)) refreshGoalNow();
   if (e.target.id !== 'run-note' || !run) return;
   setNote(runSteps()[run.idx], dkey(today()), e.target.value);
 });
