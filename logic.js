@@ -102,10 +102,19 @@ export function weekDone(h, log, d) {
 
 // Semaines consécutives réussies. La semaine en cours compte si l'objectif
 // est déjà atteint, et ne casse pas la série sinon.
+// Jours « sautés » (vacances…) entre deux dates incluses : une période où l'objectif
+// devient impossible à cause d'eux est neutre, elle ne casse pas la série.
+function skipsBetween(h, log, from, to) {
+  let n = 0;
+  for (let x = from; dkey(x) <= dkey(to); x = addDays(x, 1)) if (statusOf(log, h, dkey(x)) === SKIP) n++;
+  return n;
+}
+
 function weeklyStreak(h, log, today) {
   let n = weekDone(h, log, today) >= h.perWeek ? 1 : 0;
   for (let ws = addDays(startOfWeek(today), -7); dkey(addDays(ws, 6)) >= h.createdAt; ws = addDays(ws, -7)) {
     if (weekDone(h, log, addDays(ws, 6)) >= h.perWeek) n++;
+    else if (7 - skipsBetween(h, log, ws, addDays(ws, 6)) < h.perWeek) continue;
     else break;
   }
   return n;
@@ -119,7 +128,7 @@ function weeklyBest(h, log, today) {
     const isCurrent = dkey(ws) === cur;
     const ok = weekDone(h, log, isCurrent ? today : addDays(ws, 6)) >= h.perWeek;
     if (ok) { run++; best = Math.max(best, run); }
-    else if (!isCurrent) run = 0;
+    else if (!isCurrent && 7 - skipsBetween(h, log, ws, addDays(ws, 6)) >= h.perWeek) run = 0;
   }
   return best;
 }
@@ -165,6 +174,7 @@ function monthlyStreak(h, log, today) {
   let n = monthDone(h, log, today) >= h.perMonth ? 1 : 0;
   for (let m = addDays(startOfMonth(today), -1); dkey(m) >= h.createdAt; m = addDays(startOfMonth(m), -1)) {
     if (monthDone(h, log, m) >= h.perMonth) n++;
+    else if (m.getDate() - skipsBetween(h, log, startOfMonth(m), m) < h.perMonth) continue;
     else break;
   }
   return n;
@@ -178,7 +188,7 @@ function monthlyBest(h, log, today) {
     const isCurrent = dkey(m) === cur;
     const ok = monthDone(h, log, isCurrent ? today : endOfMonth(m)) >= h.perMonth;
     if (ok) { run++; best = Math.max(best, run); }
-    else if (!isCurrent) run = 0;
+    else if (!isCurrent && endOfMonth(m).getDate() - skipsBetween(h, log, m, endOfMonth(m)) >= h.perMonth) run = 0;
   }
   return best;
 }
@@ -545,4 +555,86 @@ export function goalProgressSeries(g, habits, log, today) {
     .filter((x) => x.d <= end).sort((a, b) => (a.d < b.d ? -1 : 1));
   if (pts[pts.length - 1].d !== end) pts.push({ d: end, p: goalProgress(g) });
   return pts.map((x) => ({ d: x.d, p: clamp01(x.p) }));
+}
+
+// ---------- Patrimoine ----------
+
+// Valeur d'une série en escalier au jour k (avant le premier point : la première valeur).
+function valueAt(pts, k, field = 'v') {
+  if (!pts.length) return 0;
+  let v = pts[0][field];
+  for (const p of pts) if (p.d <= k) v = p[field];
+  return v;
+}
+
+// Total de plusieurs objectifs chiffrés dans le temps (avant sa création, un objectif compte 0).
+export function wealthSeries(goals, habits, log, today) {
+  const all = goals.map((g) => ({ g, pts: goalSeries(g, habits, log, today) }));
+  const days = [...new Set(all.flatMap((x) => x.pts.map((p) => p.d)))].sort();
+  return days.map((k) => ({
+    d: k,
+    v: all.reduce((sum, { g, pts }) => sum + (k < g.createdAt ? 0 : valueAt(pts, k)), 0),
+  }));
+}
+
+// ---------- Bilan du mois ----------
+
+// ms : 1er jour du mois. Les jours après « today » ne comptent pas.
+// saved : ce que les objectifs en euros ont gagné pendant le mois.
+export function monthReview(habits, log, moods, goals, ms, today) {
+  const t = dkey(today);
+  const end = dkey(endOfMonth(ms)) < t ? endOfMonth(ms) : today;
+  const days = [];
+  for (let d = ms; dkey(d) <= dkey(end); d = addDays(d, 1)) days.push(d);
+  const active = habits.filter((h) => !h.archived);
+
+  let done = 0;
+  let total = 0;
+  for (const d of days) {
+    const p = dayProgress(active, log, d);
+    if (dkey(d) === t) { done += p.done; total += p.done; continue; }
+    done += p.done;
+    total += p.total;
+  }
+
+  // Habitude la plus régulière du mois
+  let regular = null;
+  for (const h of active) {
+    if (kindOf(h) === QUIT) continue;
+    let d2 = 0;
+    let t2 = 0;
+    for (const d of days) {
+      if (!isScheduled(h, d) || (isWeekly(h) || isMonthly(h))) continue;
+      const s = statusFor(h, log, dkey(d));
+      if (s === SKIP || (dkey(d) === t && s !== DONE)) continue;
+      t2++;
+      if (s === DONE) d2++;
+    }
+    if (t2 >= 3 && (!regular || d2 / t2 > regular.rate)) regular = { h, rate: d2 / t2 };
+  }
+
+  // Objectifs : progression du mois, et montant épargné (objectifs en €)
+  const before = dkey(addDays(ms, -1));
+  const endK = dkey(end);
+  let saved = 0;
+  const advanced = [];
+  for (const g of goals) {
+    if (g.createdAt > endK) continue;
+    const pts = goalProgressSeries(g, habits, log, end);
+    const p0 = g.createdAt > before ? (Number(g.startPct) || valueAt(pts, g.createdAt, 'p')) : valueAt(pts, before, 'p');
+    const gain = valueAt(pts, endK, 'p') - p0;
+    if (gain > 0.0001) advanced.push({ g, gain });
+    if (g.kind === AMOUNT && /€|eur/i.test(g.unit || '')) {
+      const vs = goalSeries(g, habits, log, end);
+      const v0 = g.createdAt > before ? valueAt(vs, g.createdAt) : valueAt(vs, before);
+      saved += valueAt(vs, endK) - v0;
+    }
+  }
+  advanced.sort((a, b) => b.gain - a.gain);
+
+  const mm = days.map((d) => moods[dkey(d)]).filter(Boolean);
+  return {
+    rate: total ? Math.round((done / total) * 100) : null, done, total, regular, saved, advanced,
+    moodAvg: mm.length ? mm.reduce((a, b) => a + b, 0) / mm.length : null,
+  };
 }

@@ -571,12 +571,10 @@ textarea { resize: vertical; }
   .mood-b.just { animation: mood 0.45s cubic-bezier(0.34, 1.56, 0.64, 1); }
 
   /* Entrée de l'écran : glissé selon le sens de navigation */
-  .view { view-transition-name: page; }
+  /* On photographie le cadre visible (taille fixe), pas toute la page : rien ne s'étire ni ne saute en hauteur. */
+  .scroller { view-transition-name: page; }
+  ::view-transition-group(page) { animation: none; }
   .tabbar { view-transition-name: tabbar; }
-  ::view-transition-old(page) { animation: vt-out 0.16s ease-in both; }
-  ::view-transition-new(page) { animation: vt-in-up 0.3s cubic-bezier(0.22, 1, 0.36, 1) both; }
-  [data-vt="left"]::view-transition-new(page) { animation-name: vt-in-left; }
-  [data-vt="right"]::view-transition-new(page) { animation-name: vt-in-right; }
   /* Sans View Transitions : simple fondu glissé */
   .view.enter { animation: vt-in-up 0.3s cubic-bezier(0.22, 1, 0.36, 1); }
 
@@ -698,9 +696,6 @@ body { position: fixed; inset: 0; width: 100%; }
   ::view-transition-old(tabbar) { display: none; }
   ::view-transition-new(tabbar) { animation: none; }
   /* L'ancien écran part du côté opposé, flouté, pendant que le nouveau arrive */
-  ::view-transition-new(page) { animation-duration: 0.38s; }
-  [data-vt="left"]::view-transition-old(page) { animation: vt-out-left 0.2s ease-in both; }
-  [data-vt="right"]::view-transition-old(page) { animation: vt-out-right 0.2s ease-in both; }
 }
 @keyframes vt-out-left { to { opacity: 0; transform: translateX(-14px) scale(0.985); filter: blur(4px); } }
 @keyframes vt-out-right { to { opacity: 0; transform: translateX(14px) scale(0.985); filter: blur(4px); } }
@@ -861,3 +856,49 @@ input[type="range"], [data-glass] input[type="range"] {
 /* Fiche verrouillée : défilement vertical seulement, sans rebond ni glissement de côté */
 .sheet { overflow-x: hidden; overscroll-behavior: none; touch-action: pan-y; }
 .sheet input[type="range"] { touch-action: pan-x; }
+
+/* Vacances */
+.banner.vac { background: color-mix(in srgb, #378ADD 14%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, #378ADD 35%, transparent); }
+.banner.vac .btn { margin-top: 10px; width: 100%; min-height: 40px; }
+.vac-txt { margin: 4px 0 0; line-height: 1.5; }
+.vac-dates { grid-template-columns: 1fr 1fr; margin: 6px 0 14px; }
+
+/* Rappels */
+.steps-guide { margin: 12px 0 16px; padding-left: 22px; display: flex; flex-direction: column; gap: 10px; font-size: 15px; line-height: 1.45; }
+a.btn { display: flex; align-items: center; justify-content: center; text-decoration: none; }
+
+/* Journal du soir */
+.journal { margin-top: 16px; }
+.journal-t { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 6px; }
+.journal-q { font-size: 17px; font-weight: 600; line-height: 1.35; margin: 0 0 10px; }
+.journal textarea { min-height: 84px; }
+.journal-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+.journal-foot .top-btn { justify-self: auto; }
+.journal-list { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.j-entry { padding: 12px 14px; border-radius: 14px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+.j-date { font-weight: 600; margin: 0 0 2px; }
+.j-date::first-letter { text-transform: uppercase; }
+.j-a { margin: 6px 0 0; line-height: 1.5; white-space: pre-wrap; }
+
+/* Patrimoine */
+.wealth .eyebrow { margin: 0 0 2px; }
+.w-total { font-size: 24px; font-weight: 700; margin: 0; font-variant-numeric: tabular-nums; }
+.w-total .muted { font-size: 14px; font-weight: 500; }
+.w-cats { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; font-size: 13px; color: var(--muted); }
+.w-cats strong { color: var(--text); }
+
+/* Changement d'écran : fondu court, léger glissé latéral, sans flou (plus fluide sur iPhone) */
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(page) { animation: pg-out 0.18s cubic-bezier(0.4, 0, 1, 1) both; }
+  ::view-transition-new(page) { animation: pg-in 0.34s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  [data-vt="left"]::view-transition-old(page) { animation-name: pg-out-left; }
+  [data-vt="right"]::view-transition-old(page) { animation-name: pg-out-right; }
+  [data-vt="left"]::view-transition-new(page) { animation-name: pg-in-left; }
+  [data-vt="right"]::view-transition-new(page) { animation-name: pg-in-right; }
+}
+@keyframes pg-out { to { opacity: 0; } }
+@keyframes pg-in { from { opacity: 0; transform: translateY(8px); } }
+@keyframes pg-out-left { to { opacity: 0; transform: translateX(-18px); } }
+@keyframes pg-out-right { to { opacity: 0; transform: translateX(18px); } }
+@keyframes pg-in-left { from { opacity: 0; transform: translateX(24px); } }
+@keyframes pg-in-right { from { opacity: 0; transform: translateX(-24px); } }

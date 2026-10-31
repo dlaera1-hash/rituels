@@ -3,9 +3,9 @@ import {
   isScheduled, statusOf, currentStreak, bestStreak, successRate, dayProgress,
   groupStatus, groupStreak, PARTIAL,
   CHECK, COUNT, QUIT, kindOf, isWeekly, valueOf, statusFor, statusForValue, weekDone, atRisk, weekReview,
-  isMonthly, periodOf, periodDone, periodTarget,
+  isMonthly, periodOf, periodDone, periodTarget, wealthSeries, monthReview, startOfMonth,
   AMOUNT, STEPS, MANUAL, goalProgress, goalPace, goalsOverall, goalLinked, goalSeries, goalProgressSeries,
-} from './logic.js?v=14'; // numéro à changer avec VERSION dans sw.js : évite un vieux fichier en cache
+} from './logic.js?v=15'; // numéro à changer avec VERSION dans sw.js : évite un vieux fichier en cache
 
 // ---------- Données ----------
 
@@ -50,7 +50,7 @@ function uid() {
 }
 
 function emptyData() {
-  return { version: 1, habits: [], log: {}, moods: {}, goals: [] };
+  return { version: 1, habits: [], log: {}, moods: {}, goals: [], journal: {}, vacation: null };
 }
 
 function load() {
@@ -64,6 +64,7 @@ function load() {
     }
     data.moods ||= {};
     data.goals ||= [];
+    data.journal ||= {};
     return data;
   } catch {
     return emptyData();
@@ -122,6 +123,7 @@ const ui = {
   tab: 'today',
   date: today(),
   reviewWeek: 0, // 0 = semaine en cours, -1 = précédente
+  reviewMonth: 0, // 0 = mois en cours, -1 = précédent
 };
 
 function today() {
@@ -217,6 +219,8 @@ function swap(fn, dir = 'up') {
   $view.classList.remove('still');
   settleSoon();
   if (document.startViewTransition && !reducedMotion.matches) {
+    // La transition fait déjà bouger l'écran : pas de cascade des tuiles en plus.
+    $view.classList.add('still');
     document.startViewTransition(fn);
   } else {
     fn();
@@ -321,12 +325,13 @@ function renderToday() {
         <div class="hero-txt"><strong>${done}/${total}</strong><span>${msg}</span></div>
       </div>
     </section>
-    ${isToday ? dangerBanner() + reviewBanner() : ''}
+    ${isToday ? vacationBanner() + dangerBanner() + reviewBanner() + monthBanner() : ''}
     <p class="hint">Touchez pour cocher. ••• pour « pas fait », « sauté » ou une note.</p>
     ${routines}
     ${loose.length ? `${routines ? '<h3 class="sec">Autres habitudes</h3>' : ''}<section class="tiles">${tiles}</section>` : ''}
     ${habits.length ? '' : '<p class="muted center">Aucune habitude prévue ce jour.</p>'}
-    ${moodRow(key)}`}
+    ${moodRow(key)}
+    ${journalCard(key, sel)}`}
   `;
 }
 
@@ -792,7 +797,7 @@ function renderCalendar() {
 
   $view.innerHTML = `
     <header class="head"><p class="eyebrow">Vos séries</p><h1>Calendrier</h1></header>
-    ${habits.length ? reviewCard() : ''}
+    ${habits.length ? reviewCard() + monthCard() : ''}
     ${habits.length ? `<div class="legend">
         <span><i class="cell done"></i>Fait</span><span><i class="cell fail"></i>Pas fait</span>
         <span><i class="cell skip"></i>Sauté</span><span><i class="cell part"></i>En partie</span><span><i class="cell miss"></i>Non renseigné</span>
@@ -800,6 +805,240 @@ function renderCalendar() {
       <p class="hint">Touchez un jour pour le modifier.</p><div class="cards">${routines}${cards}</div>`
     : '<p class="muted center pad">Ajoutez une habitude pour voir vos séries ici.</p>'}
   `;
+}
+
+
+// ---------- Mode vacances ----------
+// Les jours de vacances sont notés « sautés » (marqués vac) : ils ne cassent aucune série.
+
+function onVacation(k = dkey(today())) {
+  const v = data.vacation;
+  return !!(v && k >= v.from && k <= v.to);
+}
+
+function startVacation(from, to) {
+  for (let d = parseKey(from); dkey(d) <= to; d = addDays(d, 1)) {
+    const k = dkey(d);
+    for (const h of activeHabits()) {
+      if (kindOf(h) === QUIT || !isScheduled(h, d)) continue;
+      const e = data.log[k]?.[h.id];
+      if (e && e.s) continue;
+      (data.log[k] ||= {})[h.id] = { note: '', ...e, s: SKIP, vac: 1 };
+    }
+  }
+  data.vacation = { from, to };
+  save();
+}
+
+// Retour anticipé : les jours de vacances à venir (aujourd'hui compris) redeviennent normaux.
+function endVacation() {
+  const t = dkey(today());
+  for (const k of Object.keys(data.log)) {
+    if (k < t) continue;
+    for (const [id, e] of Object.entries(data.log[k])) {
+      if (!e.vac) continue;
+      if (e.note || e.v) data.log[k][id] = { ...e, s: null, vac: undefined };
+      else delete data.log[k][id];
+    }
+    if (!Object.keys(data.log[k]).length) delete data.log[k];
+  }
+  data.vacation = null;
+  save();
+}
+
+function vacationBanner() {
+  if (!onVacation()) return '';
+  return `<div class="banner vac"><span class="banner-t">🏖️ En vacances jusqu'au ${fmtDate(parseKey(data.vacation.to), { day: 'numeric', month: 'long' })}</span>
+    <span class="muted small">Vos séries sont en pause. Ce que vous cochez compte quand même.</span>
+    <button class="btn" data-act="vac-end">Je suis rentré, reprendre</button></div>`;
+}
+
+function openVacationSheet() {
+  const t = today();
+  $sheetBody.innerHTML = `
+    <div class="sheet-top">
+      <button class="top-btn" data-act="close-sheet" autofocus>Annuler</button>
+      <h2>Vacances</h2>
+      <button class="top-btn strong" data-act="vac-save">OK</button>
+    </div>
+    <p class="muted small vac-txt">Pendant ces jours, vos habitudes sont mises en pause : elles comptent comme « sautées » et vos séries continuent. Les habitudes à arrêter restent suivies.</p>
+    <div class="two-f vac-dates">
+      <label class="field"><span>Du</span><input id="vac-from" type="date" value="${dkey(t)}" min="${dkey(t)}"></label>
+      <label class="field"><span>Au</span><input id="vac-to" type="date" value="${dkey(addDays(t, 7))}" min="${dkey(t)}"></label>
+    </div>
+    <button class="btn primary full" data-act="vac-save">Partir en vacances</button>`;
+  openSheet();
+}
+
+// ---------- Rappels (Raccourcis iPhone) ----------
+
+function openReminderSheet() {
+  $sheetBody.innerHTML = `
+    <div class="sheet-top">
+      <button class="top-btn" data-act="close-sheet" autofocus>Fermer</button>
+      <h2>Rappels</h2>
+      <span></span>
+    </div>
+    <p class="muted small">Une appli web ne peut pas envoyer de notification sans serveur. L'app Raccourcis de l'iPhone le fait à sa place, en deux minutes :</p>
+    <ol class="steps-guide">
+      <li>Ouvrez <strong>Raccourcis</strong>, onglet <strong>Automatisation</strong>, puis <strong>+</strong>.</li>
+      <li>Choisissez <strong>Heure de la journée</strong> : par exemple 21:00, tous les jours, puis <strong>Exécuter immédiatement</strong>.</li>
+      <li>Ajoutez l'action <strong>Afficher une notification</strong> avec le texte « C'est l'heure de vos rituels ».</li>
+      <li>Refaites-le pour un rappel du matin si vous voulez.</li>
+    </ol>
+    <a class="btn primary full" href="shortcuts://">Ouvrir Raccourcis</a>
+    <p class="hint">Touchez la notification, puis ouvrez Rituels depuis l'écran d'accueil.</p>`;
+  openSheet();
+}
+
+// ---------- Journal du soir ----------
+
+const QUESTIONS = [
+  "Qu'est-ce qui vous a fait du bien aujourd'hui ?",
+  "De quoi êtes-vous fier aujourd'hui, même un peu ?",
+  "Qu'avez-vous appris aujourd'hui ?",
+  "Qu'est-ce qui vous a pris de l'énergie ?",
+  "Pour quoi êtes-vous reconnaissant ce soir ?",
+  "Qu'est-ce que vous referiez autrement ?",
+  "Quel moment voulez-vous retenir de cette journée ?",
+  "Qu'est-ce qui vous a rapproché de vos objectifs ?",
+  "À qui avez-vous pensé aujourd'hui ?",
+  "Qu'est-ce qui vous a fait sourire ?",
+  "Quelle petite victoire avez-vous eue ?",
+  "Qu'est-ce qui vous inquiète, et que pouvez-vous y faire ?",
+  "Qu'allez-vous faire demain en premier ?",
+  "Qu'avez-vous fait pour votre santé aujourd'hui ?",
+  "Qu'est-ce qui vous a surpris aujourd'hui ?",
+  "Quelle décision avez-vous repoussée ?",
+  "Qu'avez-vous fait pour quelqu'un d'autre ?",
+  "Comment vous sentez-vous, en un mot, et pourquoi ?",
+  "Qu'est-ce qui a compté le plus aujourd'hui ?",
+  "Qu'est-ce que vous voulez laisser derrière vous ce soir ?",
+  "Quelle habitude vous a le plus aidé aujourd'hui ?",
+];
+
+function questionFor(d) {
+  const start = new Date(d.getFullYear(), 0, 1);
+  const n = Math.round((d - start) / 864e5);
+  return QUESTIONS[n % QUESTIONS.length];
+}
+
+function journalCard(key, d) {
+  const e = data.journal[key];
+  const q = e?.q || questionFor(d);
+  const m = data.moods[key];
+  return `<section class="card journal">
+    <p class="journal-t">Question du soir</p>
+    <p class="journal-q">${esc(q)}</p>
+    <textarea id="journal" data-key="${key}" data-q="${esc(q)}" rows="3" placeholder="Quelques mots suffisent">${esc(e?.a || '')}</textarea>
+    <div class="journal-foot"><span class="muted small">${m ? `Humeur : ${emo(MOODS[m - 1], 'sm')}` : "Notez aussi votre humeur, juste au-dessus"}</span>
+      <button class="top-btn" data-act="journal-read">Relire</button></div>
+  </section>`;
+}
+
+function openJournalSheet() {
+  const keys = Object.keys(data.journal).filter((k) => data.journal[k]?.a).sort().reverse();
+  $sheetBody.innerHTML = `
+    <div class="sheet-top">
+      <button class="top-btn" data-act="close-sheet" autofocus>Fermer</button>
+      <h2>Journal</h2>
+      <span></span>
+    </div>
+    ${keys.length ? `<div class="journal-list">${keys.map((k) => {
+      const e = data.journal[k];
+      const m = data.moods[k];
+      return `<article class="j-entry"><p class="j-date">${fmtDate(parseKey(k), { weekday: 'long', day: 'numeric', month: 'long' })}${m ? ` · ${emo(MOODS[m - 1], 'sm')}` : ''}</p>
+        <p class="muted small">${esc(e.q)}</p><p class="j-a">${esc(e.a)}</p></article>`;
+    }).join('')}</div>` : '<p class="muted pad center">Vos réponses apparaîtront ici, soir après soir.</p>'}`;
+  openSheet();
+}
+
+// ---------- Bilan du mois ----------
+
+function monthBanner() {
+  const t = today();
+  if (t.getDate() > 3) return '';
+  const prev = new Date(t.getFullYear(), t.getMonth() - 1, 1);
+  return `<button class="banner review" data-act="open-month-review"><span class="banner-t">Votre bilan ${fmtDate(prev, { month: 'long' }).match(/^[aeiou]/i) ? "d'" : 'de '}${fmtDate(prev, { month: 'long' })} est prêt</span><span class="muted small">Voir le bilan ›</span></button>`;
+}
+
+function monthCard() {
+  const t = today();
+  const ms = new Date(t.getFullYear(), t.getMonth() + ui.reviewMonth, 1);
+  const r = monthReview(data.habits, data.log, data.moods, data.goals, ms, t);
+  const name = fmtDate(ms, { month: 'long', year: 'numeric' });
+  const days = [];
+  const last = ui.reviewMonth === 0 ? t : new Date(ms.getFullYear(), ms.getMonth() + 1, 0);
+  for (let d = ms; dkey(d) <= dkey(last); d = addDays(d, 1)) days.push(dkey(d));
+  const written = days.filter((k) => data.journal[k]?.a).length;
+  const avg = (ks) => { const v = ks.map((k) => data.moods[k]).filter(Boolean); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+  const wMood = avg(days.filter((k) => data.journal[k]?.a));
+  const nMood = avg(days.filter((k) => !data.journal[k]?.a));
+  const f1 = (x) => x.toLocaleString('fr-FR', { maximumFractionDigits: 1 });
+  const lines = [];
+  if (r.regular) lines.push(`<li>${emo(r.regular.h.icon, 'sm')} Le plus régulier : <strong>${esc(r.regular.h.name)}</strong>, ${Math.round(r.regular.rate * 100)} %</li>`);
+  if (r.saved) lines.push(`<li>💶 ${r.saved > 0 ? 'Épargné' : 'Variation'} ce mois : <strong>${r.saved > 0 ? '+' : ''}${fmtNum(r.saved)} €</strong></li>`);
+  if (r.advanced.length) lines.push(`<li>🎯 Objectifs avancés : <strong>${r.advanced.length}</strong>, dont ${esc(r.advanced[0].g.name)} (+${Math.round(r.advanced[0].gain * 100)} points)</li>`);
+  if (r.moodAvg) lines.push(`<li>${emo(MOODS[Math.round(r.moodAvg) - 1], 'sm')} Humeur moyenne : <strong>${f1(r.moodAvg)} / 5</strong></li>`);
+  if (written) lines.push(`<li>📓 Journal : <strong>${written} soir${written > 1 ? 's' : ''}</strong> sur ${days.length}${wMood && nMood ? `, humeur ${f1(wMood)} les soirs écrits contre ${f1(nMood)}` : ''}</li>`);
+  return `<article class="card review-card" id="month-review">
+    <div class="review-head">
+      <div><h2>Bilan · ${name}</h2><p class="muted small">${ui.reviewMonth === 0 ? 'Mois en cours' : 'Mois terminé'}</p></div>
+      <div class="segs two-s mini">
+        <button class="seg${ui.reviewMonth === -1 ? ' on' : ''}" data-act="review-month" data-month="-1">Précédent</button>
+        <button class="seg${ui.reviewMonth === 0 ? ' on' : ''}" data-act="review-month" data-month="0">En cours</button>
+      </div>
+    </div>
+    <div class="review-main">
+      <div class="r-ring big">${ring(r.done, r.total, 72, 8, undefined, 'month' + ui.reviewMonth)}<span>${r.rate === null ? '–' : r.rate + ' %'}</span></div>
+      <p>${r.total ? `${r.done} réussites sur ${r.total}` : 'Pas encore de jour à compter'}</p>
+    </div>
+    ${lines.length ? `<ul class="review-list">${lines.join('')}</ul>` : ''}
+  </article>`;
+}
+
+// ---------- Patrimoine ----------
+
+const WEALTH_CATS = ['financier', 'patrimoine', 'immobilier'];
+
+function wealthCard(t) {
+  const goals = data.goals.filter((g) => g.kind === AMOUNT && WEALTH_CATS.includes(g.cat) && /€|eur/i.test(g.unit || '') && g.target > 0);
+  if (!goals.length) return '';
+  const live = goals.map(liveGoal);
+  const now = live.reduce((s, g) => s + (Number(g.current) || 0), 0);
+  const target = goals.reduce((s, g) => s + g.target, 0);
+  const pts = wealthSeries(goals, data.habits, data.log, t);
+  let chart = '';
+  if (pts.length >= 2 && pts.some((p) => p.v !== pts[0].v)) {
+    const W = 300, H = 64, T = 6, B = 4;
+    const t0 = parseKey(pts[0].d).getTime();
+    const t1 = Math.max(parseKey(pts[pts.length - 1].d).getTime(), t0 + 864e5);
+    const top = Math.max(target, ...pts.map((p) => p.v)) || 1;
+    const X = (k) => 3 + ((parseKey(k).getTime() - t0) / (t1 - t0)) * (W - 7);
+    const Y = (v) => T + (1 - v / top) * (H - T - B);
+    let line = `M${X(pts[0].d).toFixed(1)},${Y(pts[0].v).toFixed(1)}`;
+    for (const p of pts.slice(1)) line += `H${X(p.d).toFixed(1)}V${Y(p.v).toFixed(1)}`;
+    const last = pts[pts.length - 1];
+    chart = `<svg class="g-spark" viewBox="0 0 ${W} ${H}" role="img" aria-label="Patrimoine : de ${fmtNum(pts[0].v)} € à ${fmtNum(last.v)} €">
+      <defs><linearGradient id="w-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--c);stop-opacity:0.3"/><stop offset="1" style="stop-color:var(--c);stop-opacity:0"/></linearGradient></defs>
+      <line class="sp-goal" x1="0" x2="${W}" y1="${Y(target)}" y2="${Y(target)}"/>
+      <path d="${line}V${H - B}H${X(pts[0].d).toFixed(1)}Z" fill="url(#w-fill)"/>
+      <path class="sp-line" d="${line}"/>
+      <circle class="sp-dot" cx="${X(last.d).toFixed(1)}" cy="${Y(last.v).toFixed(1)}" r="3.5"/>
+    </svg>`;
+  }
+  const byCat = WEALTH_CATS.map((c) => {
+    const list = live.filter((g) => g.cat === c);
+    if (!list.length) return '';
+    const cat = GOAL_CATS.find((x) => x[0] === c);
+    return `<span class="w-cat">${emo(cat[2], 'sm')} ${cat[1]} <strong>${fmtNum(list.reduce((s, g) => s + (Number(g.current) || 0), 0))} €</strong></span>`;
+  }).join('');
+  return `<article class="card wealth" style="--c:#7F77DD">
+    <p class="eyebrow">Patrimoine suivi</p>
+    <p class="w-total">${fmtNum(now)} € <span class="muted">sur ${fmtNum(target)} €</span></p>
+    ${chart}
+    <div class="w-cats">${byCat}</div>
+  </article>`;
 }
 
 // ---------- Écran 3 : Habitudes ----------
@@ -819,6 +1058,12 @@ function renderHabits() {
     <section class="list">${active.map(row).join('') || '<p class="muted pad">Aucune habitude pour le moment.</p>'}</section>
     <button class="btn dashed full" data-act="new-habit">+ Nouvelle habitude</button>
     ${archived.length ? `<h3 class="sec">Archivées</h3><section class="list">${archived.map(row).join('')}</section>` : ''}
+    <h3 class="sec">Pause et rappels</h3>
+    <div class="two">
+      ${onVacation() ? '<button class="btn" data-act="vac-end">Reprendre</button>' : '<button class="btn" data-act="vac-sheet">🏖️ Vacances</button>'}
+      <button class="btn" data-act="reminders">⏰ Rappels</button>
+    </div>
+    ${onVacation() ? `<p class="muted small">En vacances jusqu'au ${fmtDate(parseKey(data.vacation.to), { day: 'numeric', month: 'long' })}.</p>` : ''}
     <h3 class="sec">Apparence</h3>
     <div class="themes">${THEMES.map(([id, label]) => `<button class="theme-opt${currentTheme() === id ? ' on' : ''}" data-act="theme" data-t="${id}">
       <span class="sw sw-${id}"></span>${label}</button>`).join('')}</div>
@@ -943,7 +1188,7 @@ function renderGoals() {
     ${goals.length ? `<article class="card goal-hero">
       <div class="r-ring big">${ring(Math.round(overall * 100), 100, 72, 8, undefined, 'goals-all')}<span>${pctLabel(overall)}</span></div>
       <div><h2>Avancement moyen</h2><p class="muted small">${summary || 'Pas encore commencé'}</p></div>
-    </article>` : `<p class="muted goal-empty">Les choses que vous voulez faire cette année ou l'an prochain : constituer un apport, acheter un bien, ouvrir un PEA, courir un semi-marathon… Chaque objectif affiche où vous en êtes, en pourcentage, et si vous êtes dans les temps.</p>`}
+    </article>${wealthCard(t)}` : `<p class="muted goal-empty">Les choses que vous voulez faire cette année ou l'an prochain : constituer un apport, acheter un bien, ouvrir un PEA, courir un semi-marathon… Chaque objectif affiche où vous en êtes, en pourcentage, et si vous êtes dans les temps.</p>`}
     ${sections}
     <button class="btn dashed full" data-act="new-goal">+ Nouvel objectif</button>
     ${goals.length ? '<p class="hint">Touchez un objectif pour mettre à jour où vous en êtes.</p>' : ''}
@@ -1337,6 +1582,7 @@ async function importData(file) {
     data = parsed;
     data.moods ||= {};
     data.goals ||= [];
+    data.journal ||= {};
     save();
     toast('Données importées');
     render();
@@ -1838,6 +2084,27 @@ document.addEventListener('click', (e) => {
       render();
       break;
     }
+    case 'vac-sheet': openVacationSheet(); break;
+    case 'vac-save': {
+      const from = document.getElementById('vac-from').value;
+      const to = document.getElementById('vac-to').value;
+      if (!from || !to || to < from) { toast('Vérifiez les dates'); break; }
+      startVacation(from, to);
+      closeSheet();
+      render();
+      toast('Bonnes vacances, vos séries sont en pause');
+      break;
+    }
+    case 'vac-end': endVacation(); render(); toast('Bon retour'); break;
+    case 'reminders': openReminderSheet(); break;
+    case 'journal-read': openJournalSheet(); break;
+    case 'review-month': ui.reviewMonth = Number(el.dataset.month); renderCalendar(); break;
+    case 'open-month-review':
+      swap(() => {
+        ui.tab = 'calendar'; ui.reviewMonth = -1; render();
+        requestAnimationFrame(() => document.getElementById('month-review')?.scrollIntoView({ block: 'start' }));
+      }, 'left');
+      break;
     case 'export': exportData(); break;
     case 'theme': applyTheme(el.dataset.t); renderHabits(); break;
     default: break;
@@ -1849,6 +2116,13 @@ document.addEventListener('input', (e) => {
   // Un émoji tapé à la main remplace celui de la grille.
   if (e.target.id === 'h-emoji' && e.target.value.trim()) {
     $sheetBody.querySelectorAll('.ip.on').forEach((b) => { b.classList.remove('on'); b.setAttribute('aria-pressed', false); });
+  }
+  if (e.target.id === 'journal') {
+    const k = e.target.dataset.key;
+    const a = e.target.value;
+    if (a.trim()) data.journal[k] = { q: e.target.dataset.q, a };
+    else delete data.journal[k];
+    save();
   }
   if (e.target.id === 'g-pct') {
     const out = document.getElementById('g-pct-v');

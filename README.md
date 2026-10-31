@@ -29,6 +29,14 @@ Idées reprises de Habo (fait, pas fait, sauté qui ne casse pas la série, note
   objectif hebdomadaire devient juste.
 - Célébration (animation et vibration) quand la journée devient complète.
 
+## Vie quotidienne
+
+- Mode vacances (Habitudes > Pause et rappels) : les jours choisis comptent comme « sautés », les séries continuent.
+- Rappels : guide pour créer une notification quotidienne avec l'app Raccourcis de l'iPhone.
+- Journal du soir : une question par jour sous l'humeur, à relire avec l'humeur de chaque soir.
+- Bilan du mois dans le Calendrier : taux, habitude la plus régulière, montant épargné, objectifs avancés, journal.
+- Vue Patrimoine dans Objectifs : total des objectifs en euros (financier, patrimoine, immobilier) et sa courbe.
+
 ## Routines
 
 Une habitude peut appartenir à une routine (champ « Routine »), avec une durée, une consigne, une liste et un journal.

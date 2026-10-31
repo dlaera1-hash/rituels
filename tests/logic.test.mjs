@@ -206,3 +206,41 @@ test('mini courbe : étapes ou estimation à partir des avancements enregistrés
   const a = { id: 'a', kind: AMOUNT, current: 2000, target: 4000, createdAt: '2026-10-01', hist: [{ d: '2026-10-01', v: 1000 }, { d: '2026-10-15', v: 2000 }] };
   assert.deepEqual(goalProgressSeries(a, [], {}, T).map((x) => x.p), [0.25, 0.5, 0.5]);
 });
+
+import { wealthSeries, monthReview } from '../logic.js';
+
+test('vacances : une semaine impossible à cause des jours sautés ne casse pas la série', () => {
+  const w = { id: 'w', type: 'check', perWeek: 3, days: [0,1,2,3,4,5,6], createdAt: '2026-09-01' };
+  const log = {};
+  const put = (k, s) => { (log[k] ||= {}).w = { s }; };
+  // semaine du 5 oct : réussie ; semaine du 12 : vacances (5 jours sautés) ; semaine du 19 : réussie
+  ['2026-10-05', '2026-10-06', '2026-10-07', '2026-10-19', '2026-10-20', '2026-10-21'].forEach((k) => put(k, DONE));
+  ['2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15', '2026-10-16'].forEach((k) => put(k, SKIP));
+  assert.equal(currentStreak(w, log, T), 2);
+  assert.equal(bestStreak(w, log, T), 2);
+  // sans les jours sautés, la semaine du 12 casse la série
+  ['2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15', '2026-10-16'].forEach((k) => delete log[k]);
+  assert.equal(currentStreak(w, log, T), 1);
+});
+test('patrimoine : somme des objectifs, chacun à partir de sa création', () => {
+  const a = { id: 'a', kind: AMOUNT, current: 2000, target: 5000, createdAt: '2026-10-01', hist: [{ d: '2026-10-01', v: 1000 }, { d: '2026-10-20', v: 2000 }] };
+  const b = { id: 'b', kind: AMOUNT, current: 500, target: 1000, createdAt: '2026-10-10', hist: [{ d: '2026-10-10', v: 500 }] };
+  assert.deepEqual(wealthSeries([a, b], [], {}, T), [
+    { d: '2026-10-01', v: 1000 }, { d: '2026-10-10', v: 1500 }, { d: '2026-10-20', v: 2500 }, { d: '2026-10-30', v: 2500 },
+  ]);
+});
+test('bilan du mois : taux, montant épargné, objectifs avancés', () => {
+  const h = { id: 'h', type: 'check', days: [0,1,2,3,4,5,6], createdAt: '2026-09-01' };
+  const log = {};
+  for (let i = 1; i <= 29; i++) (log[`2026-10-${String(i).padStart(2, '0')}`] = {}).h = { s: i % 3 ? DONE : FAIL };
+  const g = { id: 'g', kind: AMOUNT, unit: '€', current: 3000, target: 10000, createdAt: '2026-09-01',
+    hist: [{ d: '2026-09-01', v: 1000 }, { d: '2026-09-20', v: 2000 }, { d: '2026-10-15', v: 3000 }] };
+  const r = monthReview([h], log, { '2026-10-02': 4, '2026-10-03': 2 }, [g], new Date(2026, 9, 1), T);
+  assert.equal(r.total, 29);
+  assert.equal(r.done, 20);
+  assert.equal(r.saved, 1000);
+  assert.equal(r.advanced[0].g.id, 'g');
+  assert.ok(Math.abs(r.advanced[0].gain - 0.1) < 1e-9);
+  assert.equal(r.regular.h.id, 'h');
+  assert.equal(r.moodAvg, 3);
+});
