@@ -141,3 +141,33 @@ test('rythme : part de l\'avancement au jour de la création', () => {
   assert.equal(goalPace({ ...y, current: 12000 }, new Date(2027, 0, 1)).state, 'behind');
   assert.equal(goalPace({ ...y, current: 26000 }, new Date(2027, 0, 1)).state, 'ontrack');
 });
+
+import { goalLinked, goalSeries, CHECK } from '../logic.js';
+
+test('habitude liée : apports depuis la date du lien', () => {
+  const g = { id: 'g', kind: AMOUNT, current: 1000, target: 5000, createdAt: '2026-10-01' };
+  const coche = { id: 'c', type: CHECK, goalId: 'g', goalPer: 125, goalSince: '2026-10-10', createdAt: '2026-09-01', days: [0,1,2,3,4,5,6] };
+  const chiffre = { id: 'n', type: COUNT, target: 50, unit: '€', goalId: 'g', goalSince: '2026-10-01', createdAt: '2026-10-01', days: [0,1,2,3,4,5,6] };
+  const log = {
+    '2026-10-05': { c: { s: DONE } }, // avant le lien : ne compte pas
+    '2026-10-12': { c: { s: DONE }, n: { s: DONE, v: 50 } },
+    '2026-10-19': { c: { s: FAIL }, n: { s: null, v: 20 } },
+    '2026-10-26': { c: { s: DONE } },
+  };
+  assert.equal(goalLinked(g, [coche, chiffre], log), 125 * 2 + 50 + 20);
+  assert.equal(goalLinked(g, [coche, chiffre], log, '2026-10-19'), 125 + 70);
+  assert.equal(goalLinked({ id: 'autre' }, [coche, chiffre], log), 0);
+});
+test('courbe : saisies à la main + apports, un point par jour utile', () => {
+  const g = { id: 'g', kind: AMOUNT, current: 3000, target: 5000, createdAt: '2026-10-01',
+    hist: [{ d: '2026-10-01', v: 1000 }, { d: '2026-10-20', v: 3000 }] };
+  const h = { id: 'c', type: CHECK, goalId: 'g', goalPer: 100, goalSince: '2026-10-01', createdAt: '2026-10-01', days: [0,1,2,3,4,5,6] };
+  const log = { '2026-10-10': { c: { s: DONE } }, '2026-10-25': { c: { s: DONE } } };
+  assert.deepEqual(goalSeries(g, [h], log, T), [
+    { d: '2026-10-01', v: 1000 },
+    { d: '2026-10-10', v: 1100 },
+    { d: '2026-10-20', v: 3100 },
+    { d: '2026-10-25', v: 3200 },
+    { d: '2026-10-30', v: 3200 },
+  ]);
+});

@@ -3,8 +3,8 @@ import {
   isScheduled, statusOf, currentStreak, bestStreak, successRate, dayProgress,
   groupStatus, groupStreak, PARTIAL,
   CHECK, COUNT, QUIT, kindOf, isWeekly, valueOf, statusFor, statusForValue, weekDone, atRisk, weekReview,
-  AMOUNT, STEPS, MANUAL, goalProgress, goalPace, goalsOverall,
-} from './logic.js?v=11'; // numéro à changer avec VERSION dans sw.js : évite un vieux fichier en cache
+  AMOUNT, STEPS, MANUAL, goalProgress, goalPace, goalsOverall, goalLinked, goalSeries,
+} from './logic.js?v=12'; // numéro à changer avec VERSION dans sw.js : évite un vieux fichier en cache
 
 // ---------- Données ----------
 
@@ -845,6 +845,16 @@ function goalCat(g) {
   return GOAL_CATS.find((c) => c[0] === g.cat) || GOAL_CATS[5];
 }
 
+// Objectif chiffré vu avec les apports de ses habitudes liées.
+function liveGoal(g) {
+  if (g.kind !== AMOUNT) return g;
+  return { ...g, current: (Number(g.current) || 0) + goalLinked(g, data.habits, data.log) };
+}
+
+function linkedHabits(g) {
+  return data.habits.filter((h) => h.goalId === g.id && kindOf(h) !== QUIT);
+}
+
 function pctLabel(p) {
   return `${Math.round(p * 100)}\u00a0%`; // espace insécable : le % ne passe jamais seul à la ligne
 }
@@ -876,14 +886,14 @@ function goalCard(g, t) {
       <span class="goal-pct">${pctLabel(p)}</span>
     </span>
     ${barHtml('goal-' + g.id, p)}
-    <span class="goal-foot"><span>${goalDetail(g)}</span><span class="pace pace-${pace.state}">${PACE[pace.state]}</span></span>
+    <span class="goal-foot"><span>${goalDetail(g)}${linkedHabits(g).length ? ' · habitude liée' : ''}</span><span class="pace pace-${pace.state}">${PACE[pace.state]}</span></span>
   </button>`;
 }
 
 function renderGoals() {
   const t = today();
   const y = t.getFullYear();
-  const goals = [...data.goals].sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : 0));
+  const goals = data.goals.map(liveGoal).sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : 0));
   const overall = goalsOverall(goals);
   const reached = goals.filter((g) => goalProgress(g) >= 1).length;
   const count = (st) => goals.filter((g) => goalPace(g, t).state === st).length;
@@ -916,7 +926,7 @@ let goalIsNew = false;
 function openGoalSheet(g) {
   goalIsNew = !g;
   const y = today().getFullYear();
-  goalDraft = g ? JSON.parse(JSON.stringify(g)) : {
+  goalDraft = g ? JSON.parse(JSON.stringify(liveGoal(g))) : {
     id: uid(), name: '', cat: 'financier', kind: AMOUNT, due: `${y}-12-31`, dueMode: 'y0',
     current: 0, target: null, unit: '€', steps: [], pct: 0, why: '', createdAt: dkey(today()),
   };
@@ -958,14 +968,21 @@ function drawGoalSheet() {
   readGoal(d);
   const y = today().getFullYear();
   const seg = (act, v, cur, label) => `<button class="seg${cur === v ? ' on' : ''}" data-act="${act}" data-v="${v}">${label}</button>`;
+  const links = goalIsNew ? [] : linkedHabits(d);
+  const linkedSum = goalIsNew ? 0 : goalLinked(d, data.habits, data.log);
   const amountNow = `<label class="field"><span>Où j'en suis aujourd'hui${d.unit ? ` (${esc(d.unit)})` : ''}</span>
-      <input id="g-current" type="number" inputmode="decimal" step="any" min="0" value="${d.current || ''}" placeholder="0"></label>`;
+      <input id="g-current" type="number" inputmode="decimal" step="any" min="0" value="${d.current || ''}" placeholder="0"></label>
+    ${linkedSum ? `<p class="muted small g-linked">Dont ${fmtNum(linkedSum)}${d.unit ? ' ' + esc(d.unit) : ''} apportés par ${links.map((h) => `« ${esc(h.name)} »`).join(', ')}.</p>` : ''}`;
+  const linksBlock = d.kind !== AMOUNT || goalIsNew ? '' : `<h3 class="sec">Habitudes qui le font avancer</h3>
+    ${links.length ? `<div class="list">${links.map((h) => `<div class="row" style="--c:${h.color}"><span class="row-ic">${emo(h.icon)}</span>
+      <span class="row-txt"><strong>${esc(h.name)}</strong><span>${kindOf(h) === COUNT ? `Chaque ${esc(h.unit || 'unité')} noté compte ×${fmtNum(h.goalPer || 1)}` : `+ ${fmtNum(h.goalPer)}${d.unit ? ' ' + esc(d.unit) : ''} chaque fois que c'est fait`}</span></span></div>`).join('')}</div>`
+      : '<p class="muted small">Aucune pour l\'instant. Dans une habitude, choisissez « Fait avancer un objectif » : par exemple « Virer 125 € sur l\'épargne », une fois par semaine.</p>'}`;
   const manualNow = `<label class="field"><span>Où j'en suis, à l'estime : <strong id="g-pct-v">${d.pct || 0} %</strong></span>
       <input id="g-pct" type="range" min="0" max="100" step="5" value="${d.pct || 0}"></label>`;
   const stepsNow = (d.steps || []).length ? `<div class="g-steps">${d.steps.map((st, i) => `<button type="button" class="g-step${st.done ? ' on' : ''}" data-act="g-step" data-i="${i}" aria-pressed="${st.done}">
       <span class="chk"></span><span>${esc(st.t)}</span></button>`).join('')}</div>` : '';
   const now = goalIsNew ? '' : `${goalNowBlock(d)}
-    ${d.kind === AMOUNT ? amountNow : d.kind === MANUAL ? manualNow : stepsNow}`;
+    ${d.kind === AMOUNT ? goalChart(d) + amountNow : d.kind === MANUAL ? manualNow : stepsNow}`;
   const measure = d.kind === AMOUNT ? `<div class="two-f">
       <label class="field"><span>Cible</span><input id="g-target" type="number" inputmode="decimal" step="any" min="0" value="${d.target || ''}" placeholder="40000"></label>
       <label class="field"><span>Unité</span><input id="g-unit" value="${esc(d.unit || '')}" placeholder="€" maxlength="10" autocomplete="off"></label>
@@ -994,11 +1011,82 @@ function drawGoalSheet() {
       ${seg('g-kind', AMOUNT, d.kind, 'Montant')}${seg('g-kind', STEPS, d.kind, 'Étapes')}${seg('g-kind', MANUAL, d.kind, 'Estimation')}
     </div></div>
     ${measure}
+    ${linksBlock}
     <label class="field"><span>Pourquoi c'est important (facultatif)</span>
       <textarea id="g-why" rows="2" placeholder="Acheter une maison avec jardin">${esc(d.why || '')}</textarea></label>
     <button class="btn primary full" data-act="g-save">${goalIsNew ? 'Ajouter' : 'Enregistrer'}</button>
     ${goalIsNew ? '' : '<button class="btn danger full" data-act="g-delete">Supprimer cet objectif</button>'}`;
 }
+
+// Courbe d'un objectif chiffré : montant atteint dans le temps (en escalier : il change par à-coups),
+// la cible en ligne de repère, et le rythme attendu en pointillés. Toucher la courbe affiche la valeur.
+function goalChart(d) {
+  const g = data.goals.find((x) => x.id === d.id);
+  if (!g || !(g.target > 0)) return '';
+  const t = today();
+  const pts = goalSeries(g, data.habits, data.log, t);
+  const W = 320, H = 150, L = 6, R = 6, T = 18, B = 24;
+  const t0 = parseKey(g.createdAt).getTime();
+  const t1 = Math.max(parseKey(g.due).getTime(), t.getTime(), t0 + 864e5);
+  const top = Math.max(g.target, ...pts.map((p) => p.v)) * 1.08 || 1;
+  const X = (k) => L + ((parseKey(k).getTime() - t0) / (t1 - t0)) * (W - L - R);
+  const Y = (v) => T + (1 - Math.max(0, v) / top) * (H - T - B);
+  const xy = pts.map((p) => [X(p.d), Y(p.v)]);
+  let line = `M${xy[0][0].toFixed(1)},${xy[0][1].toFixed(1)}`;
+  for (let i = 1; i < xy.length; i++) line += `H${xy[i][0].toFixed(1)}V${xy[i][1].toFixed(1)}`;
+  const last = xy[xy.length - 1];
+  const area = `${line}V${Y(0).toFixed(1)}H${xy[0][0].toFixed(1)}Z`;
+  const p0 = (Number(g.startPct) || 0) * g.target;
+  const u = g.unit ? ` ${g.unit}` : '';
+  const short = (k) => fmtDate(parseKey(k), { day: 'numeric', month: 'short' });
+  const now = pts[pts.length - 1];
+  const tips = pts.map((p) => ({ x: X(p.d) / W, d: fmtDate(parseKey(p.d), { day: 'numeric', month: 'long', year: 'numeric' }), v: `${fmtNum(p.v)}${u}` }));
+  return `<figure class="g-chart" style="--c:${goalCat(g)[3]}" data-tips="${esc(JSON.stringify(tips))}">
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(`Évolution : ${fmtNum(pts[0].v)}${u} le ${short(pts[0].d)}, ${fmtNum(now.v)}${u} aujourd'hui, cible ${fmtNum(g.target)}${u}`)}">
+      <defs><linearGradient id="g-fill" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="var(--c)" stop-opacity="0.28"/><stop offset="1" stop-color="var(--c)" stop-opacity="0.02"/>
+      </linearGradient></defs>
+      <line class="gc-base" x1="${L}" x2="${W - R}" y1="${Y(0)}" y2="${Y(0)}"/>
+      <line class="gc-target" x1="${L}" x2="${W - R}" y1="${Y(g.target)}" y2="${Y(g.target)}"/>
+      <text class="gc-lab" x="${W - R}" y="${Y(g.target) - 5}" text-anchor="end">Cible ${esc(fmtNum(g.target) + u)}</text>
+      <line class="gc-pace" x1="${X(g.createdAt)}" y1="${Y(p0)}" x2="${X(g.due)}" y2="${Y(g.target)}"/>
+      <path d="${area}" fill="url(#g-fill)"/>
+      <path class="gc-line" d="${line}"/>
+      <circle class="gc-dot" cx="${last[0]}" cy="${last[1]}" r="4.5"/>
+      <line class="gc-cross" x1="0" x2="0" y1="${T}" y2="${Y(0)}"/>
+      <text class="gc-axis" x="${L}" y="${H - 6}">${esc(short(g.createdAt))}</text>
+      <text class="gc-axis" x="${W - R}" y="${H - 6}" text-anchor="end">${esc(dueLabel(g.due))}</text>
+    </svg>
+    <figcaption class="gc-tip" hidden></figcaption>
+    <p class="gc-legend"><span class="gc-k gc-k-line"></span>Montant atteint <span class="gc-k gc-k-pace"></span>Rythme attendu</p>
+  </figure>`;
+}
+
+// Toucher ou survoler la courbe : trait vertical et valeur du point le plus proche.
+function chartHover(e) {
+  const fig = e.target.closest('.g-chart');
+  if (!fig) return;
+  const tips = JSON.parse(fig.dataset.tips);
+  const r = fig.querySelector('svg').getBoundingClientRect();
+  const fx = (e.clientX - r.left) / r.width;
+  let best = tips[0];
+  for (const tp of tips) if (tp.x <= fx + 0.02) best = tp;
+  const tip = fig.querySelector('.gc-tip');
+  const cross = fig.querySelector('.gc-cross');
+  cross.setAttribute('x1', best.x * 320);
+  cross.setAttribute('x2', best.x * 320);
+  cross.style.opacity = '1';
+  tip.hidden = false;
+  tip.innerHTML = `<strong>${esc(best.v)}</strong><span>${esc(best.d)}</span>`;
+  tip.style.left = `${Math.min(Math.max(best.x * r.width, 60), r.width - 60)}px`;
+}
+document.addEventListener('pointermove', chartHover, { passive: true });
+document.addEventListener('pointerdown', chartHover, { passive: true });
+document.addEventListener('pointerleave', (e) => {
+  if (!(e.target instanceof Element) || !e.target.matches('.g-chart')) return;
+  e.target.querySelector('.gc-tip').hidden = true;
+  e.target.querySelector('.gc-cross').style.opacity = '0';
+}, true);
 
 // Met à jour le pourcentage en haut de la fiche sans la redessiner.
 function refreshGoalNow() {
@@ -1033,6 +1121,7 @@ function drawEditSheet() {
   const minIn = document.getElementById('h-min')?.value;
   if (minIn !== undefined) d.minutes = Number(minIn) || null;
   d.createdAt = document.getElementById('h-since')?.value || d.createdAt;
+  readLink(d);
   const typed = document.getElementById('h-emoji')?.value.trim();
   if (typed) d.icon = typed;
   readContent(d);
@@ -1055,6 +1144,12 @@ function drawEditSheet() {
       </div></div>` : `<div class="field"><span>Jours</span><div class="dpick">
       ${DAY_LETTERS.map((l, i) => `<button class="dp${d.days.includes(i) ? ' on' : ''}" data-act="d-day" data-i="${i}" aria-pressed="${d.days.includes(i)}">${l}</button>`).join('')}
     </div></div>`}`;
+  const amountGoals = data.goals.filter((g) => g.kind === AMOUNT);
+  const lg = amountGoals.find((g) => g.id === d.goalId);
+  const link = kind === QUIT || !amountGoals.length ? '' : `<div class="field"><span>Fait avancer un objectif</span>
+      <select id="h-goal"><option value="">Aucun</option>${amountGoals.map((g) => `<option value="${g.id}"${g.id === d.goalId ? ' selected' : ''}>${esc(g.name)}</option>`).join('')}</select></div>
+    ${lg ? `<label class="field"><span>${kind === COUNT ? `Pour 1 ${esc(d.unit || 'unité')} noté, ajouter à l'objectif` : "Ajouté à l'objectif chaque fois que c'est fait"}${lg.unit ? ` (${esc(lg.unit)})` : ''}</span>
+      <input id="h-goalper" type="number" inputmode="decimal" step="any" min="0" value="${d.goalPer || ''}" placeholder="${kind === COUNT ? '1' : '125'}"></label>` : ''}`;
   $sheetBody.innerHTML = `
     <div class="sheet-top">
       <button class="top-btn" data-act="close-sheet" autofocus>Annuler</button>
@@ -1066,6 +1161,7 @@ function drawEditSheet() {
     <div class="field"><span>Type</span><div class="segs three-s">${typeSeg(CHECK, 'À cocher')}${typeSeg(COUNT, 'Chiffrée')}${typeSeg(QUIT, 'À arrêter')}</div></div>
     ${countFields}
     ${freq}
+    ${link}
     <div class="field"><span>Couleur</span><div class="cpick">
       ${COLORS.map((c) => `<button class="cp${d.color === c ? ' on' : ''}" style="--c:${c}" data-act="d-color" data-c="${c}" aria-label="Couleur"></button>`).join('')}
     </div></div>
@@ -1098,6 +1194,15 @@ function drawEditSheet() {
       <button class="btn" data-act="d-archive">${d.archived ? 'Réactiver' : 'Archiver'}</button>
       <button class="btn danger" data-act="d-delete">Supprimer</button>
     </div>`}`;
+}
+
+// Objectif lié, gardé quand on redessine la fiche.
+function readLink(d) {
+  const sel = document.getElementById('h-goal');
+  if (!sel) return;
+  d.goalId = sel.value || null;
+  const per = document.getElementById('h-goalper');
+  if (per) d.goalPer = Number(per.value) || null;
 }
 
 // Champs de l'habitude chiffrée, gardés quand on redessine la fiche.
@@ -1268,8 +1373,71 @@ $sheet.addEventListener('cancel', (e) => {
 $sheet.addEventListener('close', () => {
   if (run) stopRun();
   document.documentElement.classList.remove('sheet-open');
-  $sheet.classList.remove('kb');
+  $sheet.classList.remove('kb', 'dragging');
+  $sheet.style.transform = '';
+  $sheet.style.removeProperty('--drag');
 });
+
+// Glisser la fiche vers le bas pour la fermer, comme sur iPhone.
+// Le geste démarre depuis l'en-tête, ou n'importe où quand la fiche est tout en haut.
+let drag = null;
+$sheet.addEventListener('touchstart', (e) => {
+  drag = null;
+  if (e.touches.length !== 1 || $sheet.classList.contains('closing')) return;
+  if (e.target.closest('input[type="range"], textarea')) return;
+  const t = e.touches[0];
+  drag = {
+    x0: t.clientX, y0: t.clientY, dy: 0, on: false,
+    ok: $sheet.scrollTop <= 0 || !!e.target.closest('.grabber, .sheet-top, .sheet-head'),
+    last: [{ y: 0, t: e.timeStamp }],
+  };
+}, { passive: true });
+
+$sheet.addEventListener('touchmove', (e) => {
+  if (!drag) return;
+  const t = e.touches[0];
+  const dy = t.clientY - drag.y0;
+  const dx = t.clientX - drag.x0;
+  if (!drag.on) {
+    if (Math.abs(dy) < 6 && Math.abs(dx) < 6) return;
+    if (!drag.ok || dy <= 0 || Math.abs(dx) > Math.abs(dy)) { drag = null; return; }
+    drag.on = true;
+    drag.y0 = t.clientY;
+    $sheet.classList.add('dragging');
+  }
+  e.preventDefault();
+  // Un peu de résistance vers le haut, aucune vers le bas.
+  const raw = t.clientY - drag.y0;
+  drag.dy = raw >= 0 ? raw : -Math.sqrt(-raw) * 2;
+  drag.last.push({ y: drag.dy, t: e.timeStamp });
+  if (drag.last.length > 5) drag.last.shift();
+  $sheet.style.transform = `translateY(${drag.dy}px)`;
+  $sheet.style.setProperty('--drag', Math.max(0, Math.min(1, drag.dy / $sheet.offsetHeight)).toFixed(3));
+}, { passive: false });
+
+function endDrag() {
+  if (!drag || !drag.on) { drag = null; return; }
+  const { dy, last } = drag;
+  drag = null;
+  const a = last[0];
+  const b = last[last.length - 1];
+  const v = b.t > a.t ? (b.y - a.y) / (b.t - a.t) : 0; // pixels par milliseconde
+  const h = $sheet.offsetHeight;
+  $sheet.classList.remove('dragging');
+  if (dy > Math.min(150, h * 0.3) || (v > 0.5 && dy > 20)) {
+    const ms = Math.max(140, Math.min(280, (h - dy) / Math.max(v, 1.2)));
+    const anim = $sheet.animate([{ transform: `translateY(${dy}px)` }, { transform: `translateY(${h + 40}px)` }],
+      { duration: ms, easing: 'cubic-bezier(0.3, 0, 0.8, 0.6)', fill: 'forwards' });
+    anim.onfinish = () => { $sheet.close(); anim.cancel(); };
+  } else {
+    $sheet.style.transform = '';
+    $sheet.style.removeProperty('--drag');
+    $sheet.animate([{ transform: `translateY(${dy}px)` }, { transform: 'translateY(0)' }],
+      { duration: 480, easing: 'cubic-bezier(0.34, 1.4, 0.64, 1)' });
+  }
+}
+$sheet.addEventListener('touchend', endDrag);
+$sheet.addEventListener('touchcancel', endDrag);
 
 // ---------- Navigation et actions ----------
 
@@ -1471,6 +1639,10 @@ document.addEventListener('click', (e) => {
       if (!name) { toast('Donnez un nom à votre habitude'); break; }
       if (kind === COUNT && !(sheetDraft.target > 0)) { toast('Indiquez un objectif chiffré'); break; }
       if (kind !== QUIT && !sheetDraft.perWeek && !sheetDraft.days.length) { toast('Choisissez au moins un jour'); break; }
+      readLink(sheetDraft);
+      if (sheetDraft.goalId && kind === CHECK && !(sheetDraft.goalPer > 0)) { toast("Indiquez combien chaque fois ajoute à l'objectif"); break; }
+      if (kind === QUIT || !sheetDraft.goalId) { delete sheetDraft.goalId; delete sheetDraft.goalPer; delete sheetDraft.goalSince; }
+      else if (sheetDraft.goalId !== habitById(sheetDraft.id)?.goalId) sheetDraft.goalSince = sheetIsNew ? sheetDraft.createdAt : dkey(today());
       if (kind === QUIT) sheetDraft.perWeek = null;
       if (kind === QUIT || sheetDraft.perWeek) sheetDraft.days = [0, 1, 2, 3, 4, 5, 6];
       sheetDraft.name = name;
@@ -1552,19 +1724,32 @@ document.addEventListener('click', (e) => {
       if (d.kind === STEPS && !d.steps.length) { toast('Ajoutez au moins une étape'); break; }
       if (!d.due) { toast('Choisissez une échéance'); break; }
       const old = data.goals.find((g) => g.id === d.id);
-      const was = old ? goalProgress(old) : 0;
+      const was = old ? goalProgress(liveGoal(old)) : 0;
       const { dueMode, ...clean } = d;
+      if (clean.kind === AMOUNT) {
+        // On saisit le total ; on garde à part ce qui a été noté à la main.
+        clean.current = (Number(d.current) || 0) - (old ? goalLinked(old, data.habits, data.log) : 0);
+        const hist = (old && old.hist) ? [...old.hist] : [{ d: (old || d).createdAt, v: old ? Number(old.current) || 0 : clean.current }];
+        if (!old || clean.current !== (Number(old.current) || 0)) {
+          const k = dkey(today());
+          const i = hist.findIndex((x) => x.d === k);
+          if (i >= 0) hist[i] = { d: k, v: clean.current };
+          else hist.push({ d: k, v: clean.current });
+        }
+        clean.hist = hist;
+      }
       if (old) Object.assign(old, clean);
       else data.goals.push({ ...clean, startPct: goalProgress(clean) });
       save();
       closeSheet();
       render();
-      if (goalProgress(clean) >= 1 && was < 1) celebrate('Objectif atteint, bravo');
+      if (goalProgress(liveGoal(clean)) >= 1 && was < 1) celebrate('Objectif atteint, bravo');
       break;
     }
     case 'g-delete': {
       if (!confirm('Supprimer cet objectif ?')) break;
       data.goals = data.goals.filter((g) => g.id !== goalDraft.id);
+      for (const h of data.habits) if (h.goalId === goalDraft.id) { delete h.goalId; delete h.goalPer; delete h.goalSince; }
       save();
       closeSheet();
       render();
@@ -1592,6 +1777,7 @@ document.addEventListener('input', (e) => {
 });
 
 document.addEventListener('change', (e) => {
+  if (e.target.id === 'h-goal' && sheetDraft) { sheetDraft.goalId = e.target.value || null; drawEditSheet(); }
   if (e.target.id === 'import' && e.target.files[0]) importData(e.target.files[0]);
 });
 
@@ -1613,6 +1799,51 @@ settleSoon();
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('./sw.js');
 }
+
+// ---------- Appui façon Liquid Glass ----------
+// La lueur suit le doigt ; l'état « appuyé » dure au moins un instant, même sur un toucher bref.
+const PRESS_SEL = '.btn, .seg, .dp, .cp, .ip, .day, .row, .theme-opt, .step-main, .nav, .x, .top-btn, .gcat, .g-step, .goal, .mood-b, .tab, .tile-more, .tile-minus, .tile-main';
+let pressed = null;
+function glowAt(el, e) {
+  const r = el.getBoundingClientRect();
+  el.style.setProperty('--mx', `${e.clientX - r.left}px`);
+  el.style.setProperty('--my', `${e.clientY - r.top}px`);
+}
+document.addEventListener('pointerdown', (e) => {
+  let el = e.target.closest(PRESS_SEL);
+  if (!el || el.disabled) return;
+  if (el.classList.contains('tile-main')) el = el.closest('.tile') || el;
+  pressed = { el, t: performance.now() };
+  glowAt(el, e);
+  el.classList.add('pressing');
+  if (el.classList.contains('tab')) el.parentElement.classList.add('lens');
+}, { passive: true });
+document.addEventListener('pointermove', (e) => { if (pressed) glowAt(pressed.el, e); }, { passive: true });
+function releasePress() {
+  if (!pressed) return;
+  const { el, t } = pressed;
+  pressed = null;
+  setTimeout(() => {
+    el.classList.remove('pressing');
+    el.parentElement?.classList.remove('lens');
+  }, Math.max(0, 140 - (performance.now() - t)));
+}
+['pointerup', 'pointercancel'].forEach((t) => document.addEventListener(t, releasePress, { passive: true }));
+
+// Un choix qui vient de s'allumer rebondit (segments, jours, couleurs, domaines…).
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('.seg, .dp, .cp, .gcat, .ip, .theme-opt, .g-step');
+  if (!el) return;
+  requestAnimationFrame(() => {
+    // La fiche a pu être redessinée : retrouver le bouton équivalent.
+    const sel = ['act', 'v', 'i', 'c', 'k', 't', 'w', 'week'].map((k) => (el.dataset[k] !== undefined ? `[data-${k}="${CSS.escape(el.dataset[k])}"]` : '')).join('');
+    const now = el.isConnected ? el : document.querySelector(`.${el.classList[0]}${sel}`);
+    if (!now || !now.classList.contains('on')) return;
+    now.classList.remove('lit');
+    void now.offsetWidth;
+    now.classList.add('lit');
+  });
+});
 
 // Bloque le zoom à deux doigts sur iPhone : l'appli reste à sa taille.
 ['gesturestart', 'gesturechange'].forEach((t) => document.addEventListener(t, (e) => e.preventDefault(), { passive: false }));

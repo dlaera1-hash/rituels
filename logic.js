@@ -409,3 +409,48 @@ export function goalsOverall(goals) {
   if (!goals.length) return null;
   return goals.reduce((s, g) => s + goalProgress(g), 0) / goals.length;
 }
+
+// ---------- Habitudes liées à un objectif chiffré ----------
+
+// Ce que les habitudes liées ont apporté à l'objectif, jusqu'au jour « until » inclus (clé AAAA-MM-JJ).
+// Habitude à cocher : + goalPer chaque fois qu'elle est faite.
+// Habitude chiffrée : valeur notée × goalPer (1 par défaut : 50 € notés = 50 € ajoutés).
+// Seuls les jours à partir de goalSince comptent : relier une habitude n'ajoute pas son passé.
+export function goalLinked(g, habits, log, until = null) {
+  let sum = 0;
+  for (const h of habits) {
+    if (h.goalId !== g.id || kindOf(h) === QUIT) continue;
+    const count = kindOf(h) === COUNT;
+    const per = Number(h.goalPer) || (count ? 1 : 0);
+    if (!per) continue;
+    const since = h.goalSince || h.createdAt;
+    for (const k in log) {
+      if (k < since || (until && k > until)) continue;
+      const e = log[k][h.id];
+      if (!e) continue;
+      if (count) sum += (Number(e.v) || 0) * per;
+      else if (e.s === DONE) sum += per;
+    }
+  }
+  return sum;
+}
+
+// Points de la courbe d'un objectif chiffré : saisies à la main (hist) + apports des habitudes liées.
+// hist : [{ d, v }] où v est la part saisie à la main ce jour-là.
+export function goalSeries(g, habits, log, today) {
+  const end = dkey(today);
+  const hist = (g.hist && g.hist.length ? [...g.hist] : [{ d: g.createdAt, v: Number(g.current) || 0 }])
+    .sort((a, b) => (a.d < b.d ? -1 : 1));
+  const days = new Set([g.createdAt, end, ...hist.map((x) => x.d)]);
+  for (const h of habits) {
+    if (h.goalId !== g.id) continue;
+    for (const k in log) if (log[k][h.id]) days.add(k);
+  }
+  const manualAt = (k) => {
+    let v = hist[0].v;
+    for (const x of hist) if (x.d <= k) v = x.v;
+    return v;
+  };
+  return [...days].filter((k) => k >= g.createdAt && k <= end).sort()
+    .map((k) => ({ d: k, v: manualAt(k) + goalLinked(g, habits, log, k) }));
+}
